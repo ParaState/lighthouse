@@ -12,6 +12,7 @@ insecure_keys = []
 [dependencies]
 bls = { workspace = true }
 eth2_keystore = { workspace = true }
+eth2_keystore_share = { workspace = true }
 filesystem = { workspace = true }
 types = { workspace = true }
 rand = { workspace = true }

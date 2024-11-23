@@ -1,0 +1,12 @@
+[package]
+name = "eth2_keystore_share"
+version = "0.1.0"
+authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
+edition = { workspace = true }
+
+[dependencies]
+
+serde = { workspace = true }
+bls = { workspace = true }
+serde_json = { workspace = true }
+eth2_keystore = { workspace = true }

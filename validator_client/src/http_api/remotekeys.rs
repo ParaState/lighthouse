@@ -40,6 +40,7 @@ pub fn list<T: SlotClock + 'static, E: EthSpec>(
                         readonly: false,
                     })
                 }
+                SigningDefinition::DistributedKeystore { .. } => None,
             }
         })
         .collect::<Vec<_>>();

@@ -17,6 +17,7 @@ pub mod config;
 mod doppelganger_service;
 pub mod http_api;
 pub mod initialized_validators;
+pub mod operator_committee;
 pub mod validator_store;
 
 pub use beacon_node_fallback::ApiTopic;

@@ -62,6 +62,7 @@ members = [
     "crypto/kzg",
     "crypto/eth2_key_derivation",
     "crypto/eth2_keystore",
+    "crypto/eth2_keystore_share",
     "crypto/eth2_wallet",
 
     "lcli",
@@ -86,7 +87,9 @@ members = [
 
     "validator_manager",
 
-    "watch",
+    "watch", 
+    
+    "safestake_crypto",
 ]
 resolver = "2"
 
@@ -202,6 +205,7 @@ eth2 = { path = "common/eth2" }
 eth2_config = { path = "common/eth2_config" }
 eth2_key_derivation = { path = "crypto/eth2_key_derivation" }
 eth2_keystore = { path = "crypto/eth2_keystore" }
+eth2_keystore_share = { path = "crypto/eth2_keystore_share" }
 eth2_network_config = { path = "common/eth2_network_config" }
 eth2_wallet = { path = "crypto/eth2_wallet" }
 execution_layer = { path = "beacon_node/execution_layer" }
@@ -240,6 +244,7 @@ validator_client = { path = "validator_client" }
 validator_dir = { path = "common/validator_dir" }
 warp_utils = { path = "common/warp_utils" }
 
+safestake_crypto = { path = "safestake_crypto" }
 [patch.crates-io]
 quick-protobuf = { git = "https://github.com/sigp/quick-protobuf.git", rev = "681f413312404ab6e51f0b46f39b0075c6f4ebfd" }
 

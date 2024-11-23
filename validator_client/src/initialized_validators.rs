@@ -343,6 +343,7 @@ impl InitializedValidator {
                     voting_public_key: def.voting_public_key,
                 }
             }
+            SigningDefinition::DistributedKeystore { .. } => todo!(),
         };
 
         Ok(Self {
@@ -1125,6 +1126,7 @@ impl InitializedValidators {
                 }
                 // Remote signer validators don't interact with the key cache.
                 SigningDefinition::Web3Signer { .. } => (),
+                SigningDefinition::DistributedKeystore { .. } => {}
             }
         }
 
@@ -1169,6 +1171,7 @@ impl InitializedValidators {
                 }
                 // Remote signer validators don't interact with the key cache.
                 SigningDefinition::Web3Signer { .. } => (),
+                SigningDefinition::DistributedKeystore { .. } => (),
             };
         }
 
@@ -1328,6 +1331,74 @@ impl InitializedValidators {
                             }
                         }
                     }
+                    SigningDefinition::DistributedKeystore {
+                        voting_keystore_share_path,
+                        operator_committee_index,
+                        operator_id,
+                        ..
+                    } => {
+                        let pubkey_bytes = def.voting_public_key.compress();
+
+                        if self.validators.contains_key(&pubkey_bytes) {
+                            continue;
+                        }
+
+                        if let Some(key_store) = key_stores.get(voting_keystore_share_path) {
+                            disabled_uuids.remove(key_store.uuid());
+                        }
+
+                        match InitializedValidator::from_definition(
+                            def.clone(),
+                            &mut key_cache,
+                            &mut key_stores,
+                            &mut self.web3_signer_client_map,
+                            &self.config,
+                        )
+                        .await
+                        {
+                            Ok(init) => {
+                                let existing_lockfile_path = init
+                                    .keystore_lockfile()
+                                    .as_ref()
+                                    .filter(|l| l.file_existed())
+                                    .map(|l| l.path().to_owned());
+
+                                self.validators
+                                    .insert(init.voting_public_key().compress(), init);
+                                info!(
+                                    self.log,
+                                    "Enabled validator";
+                                    "signing_method" => "distributed_keystore",
+                                    "voting_pubkey" => format!("{:?}", def.voting_public_key),
+                                    "operator/validator" => format!("{}/{}", operator_id, operator_committee_index),
+                                );
+
+                                if let Some(lockfile_path) = existing_lockfile_path {
+                                    warn!(
+                                        self.log,
+                                        "Ignored stale lockfile";
+                                        "path" => lockfile_path.display(),
+                                        "cause" => "Ungraceful shutdown (harmless) OR \
+                                                    non-Lighthouse client using this keystore \
+                                                    (risky)"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    self.log,
+                                    "Failed to initialize validator";
+                                    "error" => format!("{:?}", e),
+                                    "signing_method" => "distributed_keystore",
+                                    "validator" => format!("{:?}", def.voting_public_key),
+                                    "operator/validator" => format!("{}/{}", operator_id, operator_committee_index),
+                                );
+
+                                // Exit on an invalid validator. zico: Do we need to?
+                                // return Err(e);
+                            }
+                        }
+                    }
                 }
             } else {
                 self.validators.remove(&def.voting_public_key.compress());
@@ -1342,6 +1413,14 @@ impl InitializedValidators {
                     }
                     // Remote signers do not interact with the key cache.
                     SigningDefinition::Web3Signer { .. } => (),
+                    SigningDefinition::DistributedKeystore {
+                        voting_keystore_share_path,
+                        ..
+                    } => {
+                        if let Some(key_store) = key_stores.get(voting_keystore_share_path) {
+                            disabled_uuids.insert(*key_store.uuid());
+                        }
+                    }
                 }
 
                 info!(
@@ -1421,6 +1500,7 @@ impl InitializedValidators {
                 }
                 // Remote signers don't have passwords.
                 SigningDefinition::Web3Signer { .. } => (),
+                SigningDefinition::DistributedKeystore { .. } => (),
             };
         }
 

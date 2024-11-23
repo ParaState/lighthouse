@@ -1,0 +1,11 @@
+[package]
+name = "safestake_crypto"
+version = "0.1.0"
+edition.workspace = true
+authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
+
+[dependencies]
+secp256k1 = { version = "0.30.0", features = ["global-context", "std", "rand"] }
+serde = { version = "1.0", features = ["derive"] }
+base64 = "0.22.1"
+hex = "0.4.3"

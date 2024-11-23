@@ -10,6 +10,7 @@ edition = { workspace = true }
 rand = { workspace = true }
 eth2_wallet = { workspace = true }
 eth2_keystore = { workspace = true }
+eth2_keystore_share = { workspace = true }
 filesystem = { workspace = true }
 zeroize = { workspace = true }
 serde = { workspace = true }
@@ -20,3 +21,4 @@ validator_dir = { workspace = true }
 regex = { workspace = true }
 rpassword = "5.0.0"
 directory = { workspace = true }
+safestake_crypto = { workspace = true }
