@@ -17,8 +17,9 @@ pub mod config;
 mod doppelganger_service;
 pub mod http_api;
 pub mod initialized_validators;
-pub mod operator_committee;
 pub mod validator_store;
+pub mod operator;
+pub mod contract_service;
 
 pub use beacon_node_fallback::ApiTopic;
 pub use cli::cli_app;
@@ -532,6 +533,10 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             beacon_nodes.clone(),
             context.service_context("sync_committee".into()),
         );
+
+        // safestake operator
+
+
 
         Ok(Self {
             context,

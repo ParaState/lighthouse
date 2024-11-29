@@ -16,7 +16,8 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use types::{Address, GRAFFITI_BYTES_LEN};
-
+use safestake_crypto::{secp::SecretKey as SecpSecretKey, secret::{Secret, Export}};
+use dvf_utils::{ROOT_VERSION, DVF_STORE_PATH, DVF_NODE_SECRET_PATH, DVF_NODE_SECRET_HEX_PATH, DVF_CONTRACT_BLOCK_PATH};
 pub const DEFAULT_BEACON_NODE: &str = "http://localhost:5052/";
 pub const DEFAULT_WEB3SIGNER_KEEP_ALIVE: Option<Duration> = Some(Duration::from_secs(20));
 
@@ -87,6 +88,17 @@ pub struct Config {
     pub distributed: bool,
     pub web3_signer_keep_alive_timeout: Option<Duration>,
     pub web3_signer_max_idle_connections: Option<usize>,
+    /// Safestake config
+    pub operator_id: u32,
+    pub safestake_api: String,
+    pub node_secret: Secret,
+    pub store_path: PathBuf,
+    pub contract_record_path: PathBuf,
+    pub network_contract: String,
+    pub registry_contract: String,
+    pub config_contract: String,
+    pub cluster_contract: String,
+    pub rpc_url: String
 }
 
 impl Default for Config {
@@ -97,10 +109,12 @@ impl Default for Config {
         let base_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(DEFAULT_ROOT_DIR)
+            .join(format!("v{}", ROOT_VERSION))
             .join(DEFAULT_HARDCODED_NETWORK);
         let validator_dir = base_dir.join(DEFAULT_VALIDATOR_DIR);
         let secrets_dir = base_dir.join(DEFAULT_SECRET_DIR);
-
+        let store_path = base_dir.join(DVF_STORE_PATH);
+        let contract_record_path = base_dir.join(DVF_CONTRACT_BLOCK_PATH);
         let beacon_nodes = vec![SensitiveUrl::parse(DEFAULT_BEACON_NODE)
             .expect("beacon_nodes must always be a valid url.")];
         Self {
@@ -133,6 +147,16 @@ impl Default for Config {
             distributed: false,
             web3_signer_keep_alive_timeout: DEFAULT_WEB3SIGNER_KEEP_ALIVE,
             web3_signer_max_idle_connections: None,
+            operator_id: 0,
+            safestake_api: String::new(),
+            node_secret: Secret::new(),
+            store_path,
+            contract_record_path,
+            network_contract: String::new(),
+            registry_contract: String::new(),
+            config_contract: String::new(),
+            cluster_contract: String::new(),
+            rpc_url: String::new()
         }
     }
 }
@@ -145,6 +169,7 @@ impl Config {
 
         let default_root_dir = dirs::home_dir()
             .map(|home| home.join(DEFAULT_ROOT_DIR))
+            .map(|root| root.join(format!("v{}", ROOT_VERSION)))
             .unwrap_or_else(|| PathBuf::from("."));
 
         let (mut validator_dir, mut secrets_dir) = (None, None);
@@ -442,7 +467,53 @@ impl Config {
             } else {
                 true
             };
+        
+        // safestake config
 
+        // operator id
+        config.operator_id = parse_required(cli_args, "id")?;
+        info!(log, "read operator id"; "operator id" => &config.operator_id);
+        
+        // node secret
+        let node_secret_path = default_root_dir
+            .join(get_network_dir(cli_args))
+            .join(DVF_NODE_SECRET_PATH);
+
+        let secret = if node_secret_path.exists() {
+            let secret = Secret::read(&node_secret_path)?;
+            info!(log, "read node key"; "operator node public key" => format!("{}", &secret.name));
+            secret
+        } else {
+            let secret = Secret::new();
+            secret.write(&node_secret_path)?;
+            let node_secret_path = default_root_dir
+            .join(get_network_dir(cli_args))
+            .join(DVF_NODE_SECRET_HEX_PATH);
+            secret.write_hex(&node_secret_path)?;
+            secret
+        };
+        config.node_secret = secret;
+        
+        // store
+        config.store_path = default_root_dir.join(get_network_dir(cli_args)).join(DVF_STORE_PATH);
+        info!(log, "config"; "store path" => format!("{:?}", &config.store_path));
+
+        // contract 
+        config.network_contract = parse_required(cli_args, "network-contract")?;
+        info!(log, "read network contract"; "network-contract" => &config.network_contract);
+
+        config.registry_contract = parse_required(cli_args, "registry-contract")?;
+        info!(log, "read registry contract"; "registry-contract" => &config.registry_contract);
+
+        config.config_contract = parse_required(cli_args, "config-contract")?;
+        info!(log, "read config contract"; "config-contract" => &config.config_contract);
+
+        config.cluster_contract = parse_required(cli_args, "cluster-contract")?;
+        info!(log, "read cluster contract"; "cluster-contract" => &config.cluster_contract);
+
+        config.rpc_url = parse_required(cli_args, "ws-url")?;
+        info!(log, "read rpc-url"; "rpc-url" => &config.rpc_url);
+        // todo! check opeartor id
         Ok(config)
     }
 }

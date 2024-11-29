@@ -175,6 +175,44 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         self.add_validator(validator_def).await
     }
 
+    /// Insert a new validator to `self`, where the validator is represented by an EIP-2335
+    /// keystore on the filesystem.
+        /// Insert a new validator to `self`, where the validator is represented by an EIP-2335
+    /// keystore on the filesystem.
+    pub async fn add_validator_keystore_share<P: AsRef<Path>>(
+        &self,
+        voting_keystore_share_path: P,
+        voting_keystore_share_password_path: P,
+        enable: bool,
+        graffiti: Option<GraffitiString>,
+        suggested_fee_recipient: Option<Address>,
+        gas_limit: Option<u64>,
+        builder_proposals: Option<bool>,
+        builder_boost_factor: Option<u64>,
+        prefer_builder_proposals: Option<bool>,
+        operator_committee_definition_path: P,
+        operator_id: u32,
+    ) -> Result<ValidatorDefinition, String> {
+        let mut validator_def = ValidatorDefinition::new_keystore_share_with_password_path(
+            voting_keystore_share_path,
+            voting_keystore_share_password_path,
+            graffiti.map(Into::into),
+            suggested_fee_recipient,
+            gas_limit,
+            builder_proposals,
+            builder_boost_factor,
+            prefer_builder_proposals,
+            operator_committee_definition_path,
+            operator_id,
+        )
+        .map_err(|e| format!("failed to create validator definitions: {:?}", e))?;
+
+        validator_def.enabled = enable;
+
+        self.add_validator(validator_def).await
+    }
+
+
     /// Insert a new validator to `self`.
     ///
     /// This function includes:

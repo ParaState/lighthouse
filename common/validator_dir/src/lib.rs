@@ -20,3 +20,5 @@ pub use builder::{
     VOTING_KEYSTORE_FILE, WITHDRAWAL_KEYSTORE_FILE,
 };
 pub use share_builder::VOTING_KEYSTORE_SHARE_FILE;
+pub use share_builder::ShareBuilder;
+pub use share_builder::default_keystore_share_path;

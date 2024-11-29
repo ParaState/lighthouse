@@ -262,7 +262,7 @@ impl SlashingDatabase {
             .query_and_then(params![], |row| {
                 let validator_id = row.get(0)?;
                 let pubkey_str: String = row.get(1)?;
-                let pubkey = pubkey_str
+                let pubkey    = pubkey_str
                     .parse()
                     .map_err(InterchangeError::InvalidPubkey)?;
                 Ok((validator_id, pubkey))

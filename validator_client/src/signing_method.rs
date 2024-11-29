@@ -5,17 +5,24 @@
 
 use crate::http_metrics::metrics;
 use eth2_keystore::Keystore;
+use eth2_keystore_share::KeystoreShare;
 use lockfile::Lockfile;
 use parking_lot::Mutex;
 use reqwest::{header::ACCEPT, Client};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use task_executor::TaskExecutor;
 use types::*;
 use url::Url;
 use web3signer::{ForkInfo, SigningRequest, SigningResponse};
-
+use crate::operator::operator_committee::DvfOperatorCommittee;
+use crate::operator::generic_operator_committee::TOperatorCommittee;
+use crate::operator::OPERATOR_ID;
 pub use web3signer::Web3SignerObject;
+use slog::info;
+use tokio::time::sleep;
+use chrono::prelude::{DateTime, Utc};
 
 mod web3signer;
 
@@ -31,6 +38,8 @@ pub enum Error {
     TokioJoin(String),
     MergeForkNotSupported,
     GenesisForkVersionRequired,
+    NotLeader,
+    CommitteeSignFailed(String)
 }
 
 /// Enumerates all messages that can be signed by a validator.
@@ -93,6 +102,15 @@ pub enum SigningMethod {
         http_client: Client,
         voting_public_key: PublicKey,
     },
+    /// A validator whose key is distributed among a set of operators.
+    DistributedKeystore {
+        voting_keystore_share_path: PathBuf,
+        voting_keystore_share_lockfile: Mutex<Option<Lockfile>>,
+        voting_keystore_share: KeystoreShare,
+        voting_public_key: PublicKey,
+        operator_committee: DvfOperatorCommittee,
+        keypair: Keypair
+    },
 }
 
 /// The additional information used to construct a signature. Mostly used for protection from replay
@@ -128,6 +146,7 @@ impl SigningMethod {
             // Slashing protection is only required for remote signer keys when the configuration
             // dictates that it is desired.
             SigningMethod::Web3Signer { .. } => enable_web3signer_slashing_protection,
+            SigningMethod::DistributedKeystore { .. } => true,
         }
     }
 
@@ -255,6 +274,96 @@ impl SigningMethod {
                     .map_err(|e| Error::Web3SignerJsonParsingFailed(e.to_string()))?;
 
                 Ok(response.signature)
+            }
+            SigningMethod::DistributedKeystore { 
+                operator_committee, 
+                keypair, .. } => {
+                let _timer = metrics::start_timer_vec(
+                    &metrics::SIGNING_TIMES,
+                    &[metrics::DISTRIBUTED_KEYSTORE],
+                );
+                let (epoch, slot, duty, only_aggregator) = match signable_message {
+                    SignableMessage::RandaoReveal(e) => {
+                        // Every operator should be able to get randao signature,
+                        // otherwise if, e.g, only 2 out of 4 gets the randao signature,
+                        // then the committee wouldn't be able to get enough partial signatuers for
+                        // aggregation, because the other 2 operations who don't get the randao
+                        // will NOT enter the next phase of signing block.
+                        (e, e.start_slot(E::slots_per_epoch()),  "RANDAO", false)
+                    }
+                    SignableMessage::AttestationData(a) => (a.slot.epoch(E::slots_per_epoch()), a.slot, "ATTESTER", true),
+                    SignableMessage::BeaconBlock(b) => (b.slot().epoch(E::slots_per_epoch()), b.slot(), "PROPOSER", true),
+                    SignableMessage::SignedAggregateAndProof(x) => {
+                        (x.aggregate().data().slot.epoch(E::slots_per_epoch()), x.aggregate().data().slot, "AGGREGATE", true)
+                    }
+                    SignableMessage::SelectionProof(s) => {
+                        // Every operator should be able to get selection proof signature,
+                        // otherwise operators who don't get selection proof signature will
+                        // NOT be able to insert the ATTESTER duties into their local cache,
+                        // hence will NOT enter the corresponding phase of signing attestation.
+                        (s.epoch(E::slots_per_epoch()), s, "SELECT", false)
+                    }
+                    SignableMessage::SyncSelectionProof(s) => (s.slot.epoch(E::slots_per_epoch()), s.slot, "SYNC_SELECT", false),
+                    SignableMessage::SyncCommitteeSignature {
+                        beacon_block_root: _,
+                        slot,
+                    } => (slot.epoch(E::slots_per_epoch()), slot, "SYNC_COMMITTEE", true),
+                    SignableMessage::SignedContributionAndProof(c) => {
+                        (c.contribution.slot.epoch(E::slots_per_epoch()), c.contribution.slot, "CONTRIB", true)
+                    }
+                    SignableMessage::ValidatorRegistration(_) => (
+                        Epoch::new(0),
+                        Slot::new(0),
+                        "VA_REG",
+                        false,
+                    ),
+                    SignableMessage::VoluntaryExit(e) => {
+                        (e.epoch, e.epoch.start_slot(E::slots_per_epoch()), "VA_EXIT", true)
+                    }
+                };
+
+                let is_aggregator = operator_committee.is_leader(epoch.as_u64()) || operator_committee.is_backup(epoch.as_u64());
+
+                info!(
+                    operator_committee.log,
+                    "Distributed Signing Method";
+                    "Validator" => format!("{:?}", operator_committee.validator_public_key),
+                    "Epoch" => epoch.as_u64(),
+                    "Slot" => slot.as_u64(),
+                    "Duty" => duty,
+                    "Root" => format!("{:?}", signing_root),
+                    "Is aggregator" => is_aggregator
+                );
+                
+                let local_signature = keypair.sk.sign(signing_root);
+                //todo!("store the signature to local store");
+                if !only_aggregator || (only_aggregator && is_aggregator) {
+                    let task_timeout = Duration::from_secs(E::default_spec().seconds_per_slot * 2 / 3);
+                    let timeout = sleep(task_timeout);
+                    let work = operator_committee.sign(signing_root);
+                    let start_time: DateTime<Utc> = Utc::now();
+
+                    tokio::select! {
+                        result = work => {
+                            match result {
+                                Ok((signature, ids)) => {
+                                    operator_committee.send_performance_report(epoch.as_u64(), slot.as_u64(), duty, operator_committee.validator_public_key.as_hex_string(), operator_committee.operator_id, ids, start_time).await.map_err(|e| {
+                                        Error::CommitteeSignFailed(e)
+                                    })?;
+                                    Ok(signature)
+                                },
+                                Err(e) => {
+                                    Err(Error::CommitteeSignFailed(format!("{:?}", e)))
+                                }
+                            }
+                        }
+                        _ = timeout => {
+                            Err(Error::CommitteeSignFailed(format!("Timeout")))
+                        }
+                    }
+                } else {
+                    Err(Error::NotLeader)
+                }
             }
         }
     }

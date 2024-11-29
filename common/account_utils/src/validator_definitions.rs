@@ -113,8 +113,7 @@ pub enum SigningDefinition {
         voting_keystore_share_password: Option<ZeroizeString>,
         #[serde(skip_serializing_if = "Option::is_none")]
         operator_committee_definition_path: Option<PathBuf>,
-        operator_committee_index: u64,
-        operator_id: u64,
+        operator_id: u32,
     },
 }
 
@@ -247,6 +246,57 @@ impl ValidatorDefinition {
                 voting_keystore_path,
                 voting_keystore_password_path,
                 voting_keystore_password,
+            },
+        })
+    }
+
+    /// Create a new definition for a voting keystore share at the given `voting_keystore_share_path` that can
+    /// be unlocked with password stored at `voting_keystore_share_password_path`.
+    ///
+    /// ## Notes
+    ///
+    /// This function does not check the password against the keystore.
+    pub fn new_keystore_share_with_password_path<P: AsRef<Path>>(
+        voting_keystore_share_path: P,
+        voting_keystore_share_password_path: P,
+        graffiti: Option<GraffitiString>,
+        suggested_fee_recipient: Option<Address>,
+        gas_limit: Option<u64>,
+        builder_proposals: Option<bool>,
+        builder_boost_factor: Option<u64>,
+        prefer_builder_proposals: Option<bool>,
+        operator_committee_definition_path: P,
+        operator_id: u32,
+    ) -> Result<Self, Error> {
+        let voting_keystore_share_path = voting_keystore_share_path.as_ref().into();
+        let keystore_share = KeystoreShare::from_json_file(&voting_keystore_share_path)
+            .map_err(Error::UnableToOpenKeystore)?;
+        let voting_public_key = keystore_share.master_public_key;
+
+        Ok(ValidatorDefinition {
+            enabled: true,
+            voting_public_key,
+            description: keystore_share
+                .keystore
+                .description()
+                .unwrap_or("")
+                .to_string(),
+            graffiti,
+            suggested_fee_recipient,
+            gas_limit,
+            builder_proposals,
+            builder_boost_factor,
+            prefer_builder_proposals,
+            signing_definition: SigningDefinition::DistributedKeystore {
+                voting_keystore_share_path,
+                voting_keystore_share_password_path: Some(
+                    voting_keystore_share_password_path.as_ref().into(),
+                ),
+                voting_keystore_share_password: None,
+                operator_committee_definition_path: Some(
+                    operator_committee_definition_path.as_ref().into(),
+                ),
+                operator_id,
             },
         })
     }
@@ -492,8 +542,6 @@ impl ValidatorDefinitions {
                     ))
                     .filter(|path| path.exists());
 
-                // Extract validator (operator committee) index
-                let operator_committee_index = keystore_share.master_id;
                 // Extract operator id
                 let operator_id = keystore_share.share_id;
 
@@ -523,7 +571,6 @@ impl ValidatorDefinitions {
                         voting_keystore_share_password_path,
                         voting_keystore_share_password: None,
                         operator_committee_definition_path,
-                        operator_committee_index,
                         operator_id,
                     },
                 })

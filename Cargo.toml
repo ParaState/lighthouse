@@ -89,7 +89,8 @@ members = [
 
     "watch", 
     
-    "safestake_crypto",
+    "safestake_crypto", 
+    "common/dvf_utils",
 ]
 resolver = "2"
 
@@ -245,6 +246,7 @@ validator_dir = { path = "common/validator_dir" }
 warp_utils = { path = "common/warp_utils" }
 
 safestake_crypto = { path = "safestake_crypto" }
+dvf_utils = { path = "common/dvf_utils" }
 [patch.crates-io]
 quick-protobuf = { git = "https://github.com/sigp/quick-protobuf.git", rev = "681f413312404ab6e51f0b46f39b0075c6f4ebfd" }
 

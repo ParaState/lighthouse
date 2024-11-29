@@ -45,6 +45,7 @@ pub fn list<T: SlotClock + 'static, E: EthSpec>(
                         ..
                     } => (voting_keystore.path(), Some(false)),
                     SigningMethod::Web3Signer { .. } => (None, Some(true)),
+                    SigningMethod::DistributedKeystore { .. } => (None, Some(true))
                 });
 
             SingleKeystoreResponse {

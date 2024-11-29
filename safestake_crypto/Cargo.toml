@@ -5,7 +5,22 @@ edition.workspace = true
 authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
 
 [dependencies]
+bls = { workspace = true }
+types = { workspace = true }
+slog = { workspace = true }
+dvf_utils = { workspace = true }
 secp256k1 = { version = "0.30.0", features = ["global-context", "std", "rand"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 base64 = "0.22.1"
 hex = "0.4.3"
+aes-gcm = "0.10.3"
+rand = { version = "0.8.5", features = ["small_rng"] }
+sha256 = "1.5.0"
+miracl_core = { version = "2.7.0", features = ["bls12381"] }
+num-bigint = { version = "0.4.6", features = ["rand"] }
+lazy_static = "1.5.0"
+blst = "0.3.13"
+num-traits = "0.2.19"
+bytes = "1.8.0"
+array-init = "2.1.0"

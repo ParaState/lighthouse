@@ -31,7 +31,7 @@ pub struct OperatorCommitteeDefinition {
     pub threshold: u64,
     pub validator_id: u64,
     pub validator_public_key: PublicKey,
-    pub operator_ids: Vec<u64>,
+    pub operator_ids: Vec<u32>,
     pub operator_public_keys: Vec<PublicKey>,
     pub node_public_keys: Vec<SecpPublicKey>,
     pub base_socket_addresses: Vec<Option<SocketAddr>>,

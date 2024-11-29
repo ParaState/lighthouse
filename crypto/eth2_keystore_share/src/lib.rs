@@ -14,21 +14,18 @@ use std::path::Path;
 pub struct KeystoreShare {
     pub keystore: Keystore,
     pub master_public_key: PublicKey,
-    pub master_id: u64,
-    pub share_id: u64,
+    pub share_id: u32,
 }
 
 impl KeystoreShare {
     pub fn new(
         keystore: Keystore,
         master_public_key: PublicKey,
-        master_id: u64,
-        share_id: u64,
+        share_id: u32,
     ) -> Self {
         Self {
             keystore,
             master_public_key,
-            master_id,
             share_id,
         }
     }

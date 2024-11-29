@@ -94,6 +94,14 @@ pub fn default_keystore_share_dir<P: AsRef<Path>>(
         .join(format!("{}", keystore_share.share_id))
 }
 
+pub fn default_keystore_share_path<P: AsRef<Path>>(
+    keystore_share: &KeystoreShare,
+    validators_dir: P,
+) -> PathBuf {
+    default_keystore_share_dir(keystore_share, validators_dir)
+        .join(format!("{}", VOTING_KEYSTORE_SHARE_FILE))
+}
+
 
 /// Writes a JSON keystore to file.
 fn write_keystore_share_to_file(

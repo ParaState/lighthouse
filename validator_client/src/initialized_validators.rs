@@ -6,7 +6,7 @@
 //! The `InitializedValidators` struct in this file serves as the source-of-truth of which
 //! validators are managed by this validator client.
 
-use crate::signing_method::SigningMethod;
+use crate::{operator::{generic_operator_committee::TOperatorCommittee, operator_committee::DvfOperatorCommittee, LocalOperator}, signing_method::SigningMethod};
 use account_utils::{
     read_password, read_password_from_user, read_password_string,
     validator_definitions::{
@@ -16,6 +16,7 @@ use account_utils::{
     ZeroizeString,
 };
 use eth2_keystore::Keystore;
+use eth2_keystore_share::KeystoreShare;
 use lighthouse_metrics::set_gauge;
 use lockfile::{Lockfile, LockfileError};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
@@ -31,6 +32,7 @@ use types::graffiti::GraffitiString;
 use types::{Address, Graffiti, Keypair, PublicKey, PublicKeyBytes};
 use url::{ParseError, Url};
 use validator_dir::Builder as ValidatorDirBuilder;
+use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 
 use crate::key_cache;
 use crate::key_cache::KeyCache;
@@ -117,6 +119,10 @@ pub enum Error {
     UnableToSaveKeyCache(key_cache::Error),
     UnableToDecryptKeyCache(key_cache::Error),
     UnableToDeletePasswordFile(PathBuf, io::Error),
+
+    NoCommitteeDefinition,
+    UnableToParseCommitteeDefinition(validator_definitions::Error),
+    UnableToBuildCommittee,
 }
 
 impl From<LockfileError> for Error {
@@ -151,6 +157,13 @@ impl InitializedValidator {
             .ok(),
             // Web3Signer validators do not have any lockfiles.
             SigningMethod::Web3Signer { .. } => None,
+            SigningMethod::DistributedKeystore {
+                ref voting_keystore_share_lockfile, 
+                .. 
+            } => MutexGuard::try_map(voting_keystore_share_lockfile.lock(), |option_lockfile| {
+                option_lockfile.as_mut()
+            })
+            .ok()
         }
     }
 
@@ -188,6 +201,11 @@ fn open_keystore(path: &Path) -> Result<Keystore, Error> {
     Keystore::from_json_reader(keystore_file).map_err(Error::UnableToParseVotingKeystore)
 }
 
+fn open_keystore_share(path: &Path) -> Result<KeystoreShare, Error> {
+    let keystore_share_file = File::open(path).map_err(Error::UnableToOpenVotingKeystore)?;
+    KeystoreShare::from_json_reader(keystore_share_file).map_err(Error::UnableToParseVotingKeystore)
+}
+
 fn get_lockfile_path(file_path: &Path) -> Option<PathBuf> {
     file_path
         .file_name()
@@ -210,6 +228,7 @@ impl InitializedValidator {
         key_stores: &mut HashMap<PathBuf, Keystore>,
         web3_signer_client_map: &mut Option<HashMap<Web3SignerDefinition, Client>>,
         config: &Config,
+        log: Logger,
     ) -> Result<Self, Error> {
         if !def.enabled {
             return Err(Error::UnableToInitializeDisabledValidator);
@@ -343,7 +362,90 @@ impl InitializedValidator {
                     voting_public_key: def.voting_public_key,
                 }
             }
-            SigningDefinition::DistributedKeystore { .. } => todo!(),
+            SigningDefinition::DistributedKeystore { 
+                voting_keystore_share_path,
+                voting_keystore_share_password_path,
+                voting_keystore_share_password,
+                operator_committee_definition_path,
+                .. 
+            } => {
+                use std::collections::hash_map::Entry::*;
+                let voting_keystore_share = open_keystore_share(&voting_keystore_share_path)?;
+                let voting_keystore = match key_stores.entry(voting_keystore_share_path.clone()) {
+                    Vacant(entry) => entry.insert(voting_keystore_share.keystore.clone()),
+                    Occupied(entry) => entry.into_mut(),
+                };
+                let voting_keypair = if let Some(keypair) = key_cache.get(voting_keystore.uuid()) {
+                    keypair
+                } else {
+                    let keystore = voting_keystore.clone();
+                    let keystore_path = voting_keystore_share_path.clone();
+                    // Decoding a keystore can take several seconds, therefore it's best
+                    // to keep if off the core executor. This also has the fortunate effect of
+                    // interrupting the potentially long-running task during shut down.
+                    let (password, keypair) = tokio::task::spawn_blocking(move || {
+                        Result::<_, Error>::Ok(
+                            match (
+                                voting_keystore_share_password_path,
+                                voting_keystore_share_password,
+                            ) {
+                                // If the password is supplied, use it and ignore the path
+                                // (if supplied).
+                                (_, Some(password)) => (
+                                    password.as_ref().to_vec().into(),
+                                    keystore
+                                        .decrypt_keypair(password.as_ref())
+                                        .map_err(Error::UnableToDecryptKeystore)?,
+                                ),
+                                // If only the path is supplied, use the path.
+                                (Some(path), None) => {
+                                    let password = read_password(path)
+                                        .map_err(Error::UnableToReadVotingKeystorePassword)?;
+                                    let keypair = keystore
+                                        .decrypt_keypair(password.as_bytes())
+                                        .map_err(Error::UnableToDecryptKeystore)?;
+                                    (password, keypair)
+                                }
+                                // If there is no password available, maybe prompt for a password.
+                                (None, None) => {
+                                    let (password, keypair) = unlock_keystore_via_stdin_password(
+                                        &keystore,
+                                        &keystore_path,
+                                    )?;
+                                    (password.as_ref().to_vec().into(), keypair)
+                                }
+                            },
+                        )
+                    })
+                    .await
+                    .map_err(Error::TokioJoin)??;
+                    key_cache.add(keypair.clone(), voting_keystore.uuid(), password);
+                    keypair
+                };
+                let lockfile_path = get_lockfile_path(&voting_keystore_share_path).ok_or_else(|| {
+                    Error::BadVotingKeystorePath(voting_keystore_share_path.clone())
+                })?;
+                let voting_keystore_share_lockfile = Mutex::new(Some(Lockfile::new(lockfile_path)?));
+                let committee_def_path = operator_committee_definition_path.ok_or(Error::NoCommitteeDefinition)?;
+                let committee_def = OperatorCommitteeDefinition::from_file(committee_def_path)
+                    .map_err(Error::UnableToParseCommitteeDefinition)?;
+                let validator_public_key = committee_def.validator_public_key.clone();
+                let local_operator_id = config.operator_id;
+                let mut committee = DvfOperatorCommittee::from_definition(config.node_secret.secret.clone(), local_operator_id, committee_def, log, config.safestake_api.clone());
+                committee.add_operator(local_operator_id, Box::new(LocalOperator {
+                    operator_id: local_operator_id,
+                    operator_keypair: voting_keypair.clone(),
+                }));
+
+                SigningMethod::DistributedKeystore {
+                    voting_keystore_share_path,
+                    voting_keystore_share_lockfile,
+                    voting_keystore_share,
+                    voting_public_key: validator_public_key,
+                    operator_committee: committee,
+                    keypair: voting_keypair
+                }
+            },
         };
 
         Ok(Self {
@@ -365,6 +467,7 @@ impl InitializedValidator {
             SigningMethod::Web3Signer {
                 voting_public_key, ..
             } => voting_public_key,
+            SigningMethod::DistributedKeystore { voting_public_key, .. } => &voting_public_key
         }
     }
 }
@@ -1252,6 +1355,7 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut None,
                             &self.config,
+                            self.log.clone()
                         )
                         .await
                         {
@@ -1303,6 +1407,7 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
+                            self.log.clone()
                         )
                         .await
                         {
@@ -1333,7 +1438,6 @@ impl InitializedValidators {
                     }
                     SigningDefinition::DistributedKeystore {
                         voting_keystore_share_path,
-                        operator_committee_index,
                         operator_id,
                         ..
                     } => {
@@ -1353,6 +1457,7 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
+                            self.log.clone()
                         )
                         .await
                         {
@@ -1370,7 +1475,7 @@ impl InitializedValidators {
                                     "Enabled validator";
                                     "signing_method" => "distributed_keystore",
                                     "voting_pubkey" => format!("{:?}", def.voting_public_key),
-                                    "operator/validator" => format!("{}/{}", operator_id, operator_committee_index),
+                                    "operator" => operator_id,
                                 );
 
                                 if let Some(lockfile_path) = existing_lockfile_path {
@@ -1391,7 +1496,7 @@ impl InitializedValidators {
                                     "error" => format!("{:?}", e),
                                     "signing_method" => "distributed_keystore",
                                     "validator" => format!("{:?}", def.voting_public_key),
-                                    "operator/validator" => format!("{}/{}", operator_id, operator_committee_index),
+                                    "operator" => operator_id,
                                 );
 
                                 // Exit on an invalid validator. zico: Do we need to?

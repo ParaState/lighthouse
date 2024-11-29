@@ -36,6 +36,7 @@ pub const ATTESTATION_SELECTION_PROOFS: &str = "attestation_selection_proofs";
 pub const SUBSCRIPTIONS: &str = "subscriptions";
 pub const LOCAL_KEYSTORE: &str = "local_keystore";
 pub const WEB3SIGNER: &str = "web3signer";
+pub const DISTRIBUTED_KEYSTORE: &str = "distributed_keystore";
 
 pub use lighthouse_metrics::*;
 

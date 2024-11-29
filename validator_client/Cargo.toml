@@ -37,9 +37,10 @@ deposit_contract = { workspace = true }
 bls = { workspace = true }
 eth2 = { workspace = true }
 tempfile = { workspace = true }
-validator_dir = { workspace = true }
+validator_dir = { workspace = true, features = ["insecure_keys"]}
 clap_utils = { workspace = true }
 eth2_keystore = { workspace = true }
+eth2_keystore_share = { workspace = true }
 account_utils = { workspace = true }
 lighthouse_version = { workspace = true }
 warp_utils = { workspace = true }
@@ -61,4 +62,21 @@ sysinfo = { workspace = true }
 system_health = { path = "../common/system_health" }
 logging = { workspace = true }
 strum = { workspace = true }
+safestake_crypto = { workspace = true }
+dvf_utils = { workspace = true }
+store = { workspace = true }
 fdlimit = "0.3.0"
+async-trait = "0.1.83"
+chrono = { version = "0.4"}
+keccak-hash = "0.10.0"
+alloy-primitives = "0.8.13"
+alloy-provider = "0.6.4"
+alloy-rpc-types = "0.6.4"
+alloy-sol-macro = "0.8.13"
+alloy-sol-types = "0.8.13"
+alloy-contract = "0.6.4"
+alloy-transport-http = "0.6.4"
+serde_yaml = { workspace = true }
+r2d2 = { workspace = true }
+rusqlite = { workspace = true }
+r2d2_sqlite = "0.21.0"
