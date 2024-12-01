@@ -18,12 +18,11 @@ use url::Url;
 use web3signer::{ForkInfo, SigningRequest, SigningResponse};
 use crate::operator::operator_committee::DvfOperatorCommittee;
 use crate::operator::generic_operator_committee::TOperatorCommittee;
-use crate::operator::OPERATOR_ID;
 pub use web3signer::Web3SignerObject;
 use slog::info;
 use tokio::time::sleep;
 use chrono::prelude::{DateTime, Utc};
-
+use tokio::sync::mpsc::Sender;
 mod web3signer;
 
 #[derive(Debug, PartialEq)]
@@ -109,7 +108,8 @@ pub enum SigningMethod {
         voting_keystore_share: KeystoreShare,
         voting_public_key: PublicKey,
         operator_committee: DvfOperatorCommittee,
-        keypair: Keypair
+        keypair: Keypair,
+        store_sender: Sender<(Hash256, Signature, PublicKey)>,
     },
 }
 
@@ -277,7 +277,9 @@ impl SigningMethod {
             }
             SigningMethod::DistributedKeystore { 
                 operator_committee, 
-                keypair, .. } => {
+                keypair, 
+                store_sender,
+                .. } => {
                 let _timer = metrics::start_timer_vec(
                     &metrics::SIGNING_TIMES,
                     &[metrics::DISTRIBUTED_KEYSTORE],
@@ -336,13 +338,12 @@ impl SigningMethod {
                 );
                 
                 let local_signature = keypair.sk.sign(signing_root);
-                //todo!("store the signature to local store");
+                store_sender.send((signing_root, local_signature, operator_committee.validator_public_key.clone())).await.unwrap();
                 if !only_aggregator || (only_aggregator && is_aggregator) {
                     let task_timeout = Duration::from_secs(E::default_spec().seconds_per_slot * 2 / 3);
                     let timeout = sleep(task_timeout);
                     let work = operator_committee.sign(signing_root);
                     let start_time: DateTime<Utc> = Utc::now();
-
                     tokio::select! {
                         result = work => {
                             match result {

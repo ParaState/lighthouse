@@ -55,6 +55,11 @@ pub static DVF_STORE_PATH: &str = "dvf_store";
 pub static DVF_NODE_SECRET_PATH: &str = "node_key.json";
 pub static DVF_NODE_SECRET_HEX_PATH: &str = "node_key_hex.json";
 pub static DVF_CONTRACT_BLOCK_PATH: &str = "contract_record.yml";
+pub static DVF_DATABASE_PATH: &str = "safestake_database.sqlite";
+pub const BOOT_ENRS_CONFIG_FILE: &str = "boot_config/boot_enrs.yaml";
+
+pub const DEFAULT_BASE_PORT: u16 = 26_000;
+
 pub fn invalid_addr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0)
 }

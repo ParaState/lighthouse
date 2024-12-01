@@ -12,12 +12,12 @@ use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
 use slog::{info, warn, Logger};
 use std::fs;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::time::Duration;
 use types::{Address, GRAFFITI_BYTES_LEN};
-use safestake_crypto::{secp::SecretKey as SecpSecretKey, secret::{Secret, Export}};
-use dvf_utils::{ROOT_VERSION, DVF_STORE_PATH, DVF_NODE_SECRET_PATH, DVF_NODE_SECRET_HEX_PATH, DVF_CONTRACT_BLOCK_PATH};
+use safestake_crypto::secret::{Secret, Export};
+use dvf_utils::{ROOT_VERSION, DVF_STORE_PATH, DVF_NODE_SECRET_PATH, DVF_NODE_SECRET_HEX_PATH, DVF_CONTRACT_BLOCK_PATH, DEFAULT_BASE_PORT};
 pub const DEFAULT_BEACON_NODE: &str = "http://localhost:5052/";
 pub const DEFAULT_WEB3SIGNER_KEEP_ALIVE: Option<Duration> = Some(Duration::from_secs(20));
 
@@ -98,7 +98,9 @@ pub struct Config {
     pub registry_contract: String,
     pub config_contract: String,
     pub cluster_contract: String,
-    pub rpc_url: String
+    pub rpc_url: String,
+    pub ip: IpAddr,
+    pub base_port: u16
 }
 
 impl Default for Config {
@@ -156,7 +158,9 @@ impl Default for Config {
             registry_contract: String::new(),
             config_contract: String::new(),
             cluster_contract: String::new(),
-            rpc_url: String::new()
+            rpc_url: String::new(),
+            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            base_port: DEFAULT_BASE_PORT
         }
     }
 }
@@ -472,8 +476,14 @@ impl Config {
 
         // operator id
         config.operator_id = parse_required(cli_args, "id")?;
-        info!(log, "read operator id"; "operator id" => &config.operator_id);
+        info!(log, "read operator id"; "operator id" => config.operator_id);
         
+        config.ip = parse_required(cli_args, "ip")?;
+        info!(log, "read operator ip"; "operator ip" => %config.ip);
+
+        config.base_port = parse_required(cli_args, "base-port")?;
+        info!(log, "read base port"; "base-port" => config.base_port);
+
         // node secret
         let node_secret_path = default_root_dir
             .join(get_network_dir(cli_args))
@@ -511,9 +521,8 @@ impl Config {
         config.cluster_contract = parse_required(cli_args, "cluster-contract")?;
         info!(log, "read cluster contract"; "cluster-contract" => &config.cluster_contract);
 
-        config.rpc_url = parse_required(cli_args, "ws-url")?;
+        config.rpc_url = parse_required(cli_args, "rpc-url")?;
         info!(log, "read rpc-url"; "rpc-url" => &config.rpc_url);
-        // todo! check opeartor id
         Ok(config)
     }
 }

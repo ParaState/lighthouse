@@ -19,7 +19,6 @@ use std::str::from_utf8;
 use std::thread::sleep;
 use std::time::Duration;
 use types::PublicKey;
-use validator_dir::VOTING_KEYSTORE_SHARE_FILE;
 use zeroize::Zeroize;
 
 pub mod operator_committee_definitions;

@@ -6,7 +6,7 @@ use crate::operator::RemoteOperator;
 use dvf_utils::{DvfError, invalid_addr};
 use async_trait::async_trait;
 use futures::future::join_all;
-use slog::{crit, error, info, Logger};
+use slog::Logger;
 use safestake_crypto::{ThresholdSignature, secp::SecretKey};
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use chrono::prelude::{DateTime, Utc};
@@ -69,22 +69,22 @@ impl TOperatorCommittee for DvfOperatorCommittee {
     async fn check_liveness(&self, operator_id: u32) -> bool {
         self.operators.get(&operator_id).unwrap().is_active().await
     }
-    async fn attest(&self, attest_data: &AttestationData) {
+    async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
         let attest_futures = self.operators.iter().map(|(_, op)| async move {
-            op.attest(attest_data).await
+            op.attest(attest_data, domain_hash).await
         });
         join_all(attest_futures).await;
 
     }
-    async fn propose_full_block(&self, full_block: &[u8]) { 
+    async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256) { 
         let propose_futures = self.operators.iter().map(|(_, op)| async move {
-            op.propose_full_block(full_block).await
+            op.propose_full_block(full_block, domain_hash).await
         });
         join_all(propose_futures).await;
     }
-    async fn propose_blinded_block(&self, blinded_block: &[u8]) { 
+    async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256) { 
         let propose_futures = self.operators.iter().map(|(_, op)| async move {
-            op.propose_blinded_block(blinded_block).await
+            op.propose_blinded_block(blinded_block, domain_hash).await
         });
         join_all(propose_futures).await;
     }
@@ -115,20 +115,24 @@ impl DvfOperatorCommittee {
 
     pub fn from_definition(node_secret_key: SecretKey, operator_id: u32, def: OperatorCommitteeDefinition, log: Logger, api: String) -> Self {
         let mut committee = Self::new(
-            node_secret_key,
+            node_secret_key.clone(),
             operator_id,
             def.validator_public_key.clone(),
             def.threshold as usize,
-            log,
+            log.clone(),
             api
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
             let operator = RemoteOperator {
+                self_operator_secretkey: node_secret_key.clone(), 
+                self_operator_id: operator_id,
                 operator_id: def.operator_ids[i],
                 base_address: addr,
+                validator_public_key: def.validator_public_key.clone(),
                 operator_node_pk: def.node_public_keys[i].clone(),
-                shared_public_key: def.operator_public_keys[i].clone()
+                shared_public_key: def.operator_public_keys[i].clone(),
+                logger: log.clone()
             };
             committee
                 .add_operator(def.operator_ids[i], Box::new(operator));

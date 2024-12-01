@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package safestake;
+
+message CheckLivenessRequest {
+    uint64 version = 1;
+    bytes msg = 2;
+    bytes validator_public_key = 3;
+}
+
+message CheckLivenessResponse {
+    bytes signature = 1;
+}
+
+message GetSignatureRequest {
+    uint64 version = 1;
+    bytes msg = 2;
+    bytes validator_public_key = 3;
+}
+
+message GetSignatureResponse {
+    bytes signature = 1;
+}
+
+message AttestRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domian_hash_signature = 4;
+    bytes attestation_data = 5;
+    bytes validator_public_key = 6;
+}
+
+message AttestResponse {
+    string msg = 1;
+}
+
+message ProposeFullBlockRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domian_hash_signature = 4;
+    bytes full_block_data = 5;
+    bytes validator_public_key = 6;
+}
+
+message ProposeFullBlockResponse {
+    string msg = 1;
+}
+
+message ProposeBlindedBlockRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domian_hash_signature = 4;
+    bytes blinded_block_data = 5;
+    bytes validator_public_key = 6;
+}
+
+message ProposeBlindedBlockResponse {
+    string msg = 1;
+}
+
+// Inference is the inference service.
+service Safestake {
+    rpc CheckLiveness(CheckLivenessRequest) returns (CheckLivenessResponse) {}
+    rpc GetSignature(GetSignatureRequest) returns (GetSignatureResponse) {}
+    rpc AttestData(AttestRequest) returns (AttestResponse) {}
+    rpc ProposeFullBlock(ProposeFullBlockRequest) returns (ProposeFullBlockResponse) {}
+    rpc ProposeBlindedBlock(ProposeBlindedBlockRequest) returns (ProposeBlindedBlockResponse) {}
+}  
+

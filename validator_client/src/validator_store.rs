@@ -19,7 +19,7 @@ use task_executor::TaskExecutor;
 use types::{
     attestation::Error as AttestationError, graffiti::GraffitiString, AbstractExecPayload, Address,
     AggregateAndProof, Attestation, BeaconBlock, BlindedPayload, ChainSpec, ContributionAndProof,
-    Domain, Epoch, EthSpec, Fork, ForkName, Graffiti, Hash256, PublicKeyBytes, SelectionProof,
+    Domain, Epoch, EthSpec, Fork, ForkName, Graffiti, Hash256, PublicKeyBytes, PublicKey, SelectionProof,
     Signature, SignedAggregateAndProof, SignedBeaconBlock, SignedContributionAndProof, SignedRoot,
     SignedValidatorRegistrationData, SignedVoluntaryExit, Slot, SyncAggregatorSelectionData,
     SyncCommitteeContribution, SyncCommitteeMessage, SyncSelectionProof, SyncSubnetId,
@@ -1102,5 +1102,90 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         *last_prune = current_epoch;
 
         info!(self.log, "Completed pruning of slashing protection DB");
+    }
+
+    /// Remove a validator
+    pub async fn remove_validator_keystore(&self, validator_public_key: &PublicKey) {
+        match self
+            .validators
+            .write()
+            .delete_definition_and_keystore(validator_public_key, true)
+            .await
+        {
+            Ok(_) => {
+                info!(self.log, "remove validator keystore";
+                "msg" => format!("delete validator {}", validator_public_key));
+            }
+            Err(_e) => {
+                error!(self.log, "remove validator keystore";
+                "error" => format!("failed to delete keystore {:?}", validator_public_key));
+            }
+        }
+    }
+
+    pub async fn set_validator_fee_recipient(
+        &self,
+        validator_public_key: &PublicKey,
+        fee_recipient: Address,
+    ) {
+        info!(self.log, "setting validator fee recipient";
+            "validator public key" => validator_public_key.as_hex_string(),
+            "fee recipient" => format!("{:?}", fee_recipient));
+        match self
+            .validators
+            .write()
+            .set_validator_fee_recipient(validator_public_key, fee_recipient)
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!(self.log, "failed to set validator fee recipient"; "error" => format!("{:?}", e));
+            }
+        }
+    }
+
+    pub async fn is_enabled(&self, validator_public_key: &PublicKey) -> Option<bool> {
+        self.validators.read().is_enabled(validator_public_key)
+    }
+
+    pub async fn enable_keystore(&self, validator_public_key: &PublicKey) {
+        match self.validators.write().set_validator_definition_fields(
+            validator_public_key,
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None
+        ).await {
+            Ok(()) => {
+                info!(self.log, "start validator keystore";
+                "validator public key" => %validator_public_key);
+            },
+            Err(e) => {
+                error!(self.log, "start validator keystore";
+                "err" => format!("{:?}", e));
+            }
+        }
+    }
+
+    pub async fn disable_keystore(&self, validator_public_key: &PublicKey) {
+        match self.validators.write().set_validator_definition_fields(
+            validator_public_key,
+            Some(false),
+            None,
+            None,
+            None,
+            None,
+            None
+        ).await {
+            Ok(()) => {
+                info!(self.log, "stop validator keystore";
+                "validator public key" => %validator_public_key);
+            },
+            Err(e) => {
+                error!(self.log, "stop validator keystore";
+                "err" => format!("{:?}", e));
+            }
+        }
     }
 }

@@ -10,12 +10,12 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 use types::{
     Address, ChainSpec, EthSpec, ProposerPreparationData, SignedValidatorRegistrationData,
     ValidatorRegistrationData,
 };
+use crate::operator::database::SafeStakeDatabase;
 
 /// Number of epochs before the Bellatrix hard fork to begin posting proposer preparations.
 const PROPOSER_PREPARATION_LOOKAHEAD_EPOCHS: u64 = 2;
@@ -31,6 +31,7 @@ pub struct PreparationServiceBuilder<T: SlotClock + 'static, E: EthSpec> {
     context: Option<RuntimeContext<E>>,
     builder_registration_timestamp_override: Option<u64>,
     validator_registration_batch_size: Option<usize>,
+    safestake_database: Option<SafeStakeDatabase>
 }
 
 impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
@@ -42,6 +43,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
             context: None,
             builder_registration_timestamp_override: None,
             validator_registration_batch_size: None,
+            safestake_database: None
         }
     }
 
@@ -81,6 +83,14 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
         self
     }
 
+    pub fn safestake_database(
+        mut self,
+        safestake_database: SafeStakeDatabase
+    ) -> Self {
+        self.safestake_database = Some(safestake_database);
+        self
+    }
+
     pub fn build(self) -> Result<PreparationService<T, E>, String> {
         Ok(PreparationService {
             inner: Arc::new(Inner {
@@ -102,6 +112,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
                     "Cannot build PreparationService without validator_registration_batch_size",
                 )?,
                 validator_registration_cache: RwLock::new(HashMap::new()),
+                safestake_database: self.safestake_database.ok_or("Cannot build PreparationService without safestake_database")?
             }),
         })
     }
@@ -118,6 +129,7 @@ pub struct Inner<T, E: EthSpec> {
     validator_registration_cache:
         RwLock<HashMap<ValidatorRegistrationKey, SignedValidatorRegistrationData>>,
     validator_registration_batch_size: usize,
+    safestake_database: SafeStakeDatabase
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -420,10 +432,21 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
                     if let Some(timestamp) = self.builder_registration_timestamp_override {
                         timestamp
                     } else {
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map_err(|e| format!("{e:?}"))?
-                            .as_secs()
+                        let timestamp = match self.safestake_database.with_transaction(|tx| {
+                            self.safestake_database.query_validator_registration_timestamp(tx, &key.pubkey.decompress().unwrap())
+                        }) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                warn!(
+                                    log,
+                                    "Unable to find registration timestamp";
+                                    "error" => %e,
+                                    "validator public key" => %&key.pubkey
+                                );
+                                1718640000
+                            }
+                        };
+                        timestamp
                     };
 
                 let ValidatorRegistrationKey {

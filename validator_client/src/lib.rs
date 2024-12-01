@@ -20,6 +20,8 @@ pub mod initialized_validators;
 pub mod validator_store;
 pub mod operator;
 pub mod contract_service;
+pub mod operator_service;
+pub mod discovery_service;
 
 pub use beacon_node_fallback::ApiTopic;
 pub use cli::cli_app;
@@ -52,6 +54,7 @@ use reqwest::Certificate;
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -66,6 +69,13 @@ use tokio::{
 };
 use types::{EthSpec, Hash256, PublicKeyBytes};
 use validator_store::ValidatorStore;
+use crate::operator_service::SafestakeService;
+use crate::operator::database::SafeStakeDatabase;
+use crate::contract_service::ContractService;
+use dvf_utils::DVF_DATABASE_PATH;
+use store::LevelDB;
+use crate::operator::proto::safestake_server::SafestakeServer;
+use tonic::transport::Server;
 
 /// The interval between attempts to contact the beacon node during startup.
 const RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -213,11 +223,14 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             );
         }
 
+        let (sender, recv) = tokio::sync::mpsc::channel(1000);
+
         let validators = InitializedValidators::from_definitions(
             validator_defs,
             config.validator_dir.clone(),
             config.clone(),
             log.clone(),
+            Some(sender)
         )
         .await
         .map_err(|e| {
@@ -447,7 +460,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
 
         let validator_store = Arc::new(ValidatorStore::new(
             validators,
-            slashing_protection,
+            slashing_protection.clone(),
             genesis_validators_root,
             context.eth2_config.spec.clone(),
             doppelganger_service.clone(),
@@ -517,6 +530,15 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             .runtime_context(context.service_context("attestation".into()))
             .build()?;
 
+        // 
+        let safestake_database_path = config.validator_dir.join(DVF_DATABASE_PATH);
+        let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path).map_err(|e| {
+            format!(
+                "Failed to open or create slashing protection database: {:?}",
+                e
+            )
+        })?;
+
         let preparation_service = PreparationServiceBuilder::new()
             .slot_clock(slot_clock.clone())
             .validator_store(validator_store.clone())
@@ -524,6 +546,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             .runtime_context(context.service_context("preparation".into()))
             .builder_registration_timestamp_override(config.builder_registration_timestamp_override)
             .validator_registration_batch_size(config.validator_registration_batch_size)
+            .safestake_database(safestake_database.clone())
             .build()?;
 
         let sync_committee_service = SyncCommitteeService::new(
@@ -535,8 +558,47 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         );
 
         // safestake operator
+        ContractService::check_operator(&config).await?;
 
+        let keypairs = Arc::new(RwLock::new(HashMap::new()));
+        ContractService::spawn_pull_logs(
+            log.clone(),
+            config.clone(),
+            validator_store.clone(),
+            safestake_database.clone(),
+            context.executor.clone(),
+            keypairs.clone()
+        ).await?;
 
+        ContractService::spawn_validator_monitor(
+            log.clone(),
+            config.clone(),
+            validator_store.clone(),
+            safestake_database.clone(),
+            context.executor.clone(),
+        ).await?;
+
+        let store = Arc::new(LevelDB::<E>::open(&config.store_path.clone()).map_err(|e| {
+            format!("{:?}", e)
+        })?);
+
+        let operator_service = SafestakeService::new(
+            log,
+            config.node_secret.clone(),
+            store,
+            slashing_protection.clone(),
+            safestake_database,
+            keypairs,
+            recv
+        );
+
+        let addr = format!("[::1]:{}", config.base_port).parse().unwrap();
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(SafestakeServer::new(operator_service))
+                .serve(addr)
+                .await.unwrap()
+        });
 
         Ok(Self {
             context,

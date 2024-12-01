@@ -1,13 +1,14 @@
 use r2d2_sqlite::SqliteConnectionManager;
-use std::path::Path;
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use std::{path::Path, str::FromStr};
+use rusqlite::{params, OptionalExtension, Transaction};
 use slashing_protection::NotSafe;
 use std::fs::File;
 use std::time::Duration;
 use filesystem::restrict_file_permissions;
 use alloy_primitives::Address;
 use super::models::{Operator, Validator};
-use safestake_crypto::secp::PublicKey;
+use safestake_crypto::secp::PublicKey as SecpPublicKey;
+use bls::PublicKey;
 type Pool = r2d2::Pool<SqliteConnectionManager>;
 use std::net::SocketAddr;
 /// We set the pool size to 1 for compatibility with locking_mode=EXCLUSIVE.
@@ -173,10 +174,29 @@ impl SafeStakeDatabase {
         txn: &Transaction,
         va: &Validator
     ) -> Result<(), NotSafe> {
-        txn.execute("INSERT INTO validators(public_key, owner_address, registration_timestamp) values(?1, ?2, ?3", params![va.public_key.as_hex_string(), va.owner.to_string(), va.registration_timestamp.to_string()])?;
+        txn.execute("INSERT INTO validators(public_key, owner_address, registration_timestamp) values(?1, ?2, ?3)", params![va.public_key.as_hex_string(), va.owner.to_string(), va.registration_timestamp.to_string()])?;
         for operator_id in &va.releated_operators {
             txn.execute("INSERT INTO validator_operators_mapping(validator_public_key, operator_id) values(?1, ?2)", params![va.public_key.as_hex_string(), operator_id])?;
         }
+        Ok(())
+    }
+
+    pub fn update_validator_registration_timestamp(
+        &self,
+        txn: &Transaction,
+        validator_public_key: &PublicKey,
+        registration_timestamp: u64
+    ) -> Result<(), NotSafe> {
+        txn.execute("UPDATE validators set registration_timestamp = ?1 where public_key = ?2", params![validator_public_key.to_string(), registration_timestamp.to_string()])?;
+        Ok(())
+    }
+
+    pub fn delete_validator(
+        &self,
+        txn: &Transaction,
+        validator_public_key: &PublicKey
+    ) -> Result<(), NotSafe> {
+        txn.execute("DELETE FROM validators WHERE public_key = ?1", params![validator_public_key.as_hex_string()])?;
         Ok(())
     }
 
@@ -193,12 +213,118 @@ impl SafeStakeDatabase {
     pub fn upsert_operator_socket_address(
         &self,
         txn: &Transaction,
-        operator_public_key: &PublicKey,
+        operator_public_key: &SecpPublicKey,
         socket_address: &SocketAddr,
         seq: u64
     ) -> Result<(), NotSafe> {
-        
-
+        txn.execute("INSERT INTO operator_socket_address (public_key, socket_address, seq) VALUES (?1, ?2, ?3) ON CONFLICT (public_key) DO UPDATE SET socket_address = ?2, seq = ?3", params![operator_public_key.base64(), socket_address.to_string(), seq.to_string()])?;
         Ok(())
+    }
+
+    pub fn query_operator_socket_address(
+        &self,
+        txn: &Transaction,
+        operator_public_key: &SecpPublicKey
+    ) -> Result<SocketAddr, NotSafe> {
+        let mut stmt = txn.prepare("SELECT socket_address from operator_socket_address where public_key = ?1")?;
+        Ok(stmt.query_row(params![operator_public_key.base64()], |row| {
+            let socket_address: String = row.get(0).unwrap();
+            Ok(SocketAddr::from_str(&socket_address).unwrap())
+        })?)
+    }
+
+    pub fn query_operator_seq(
+        &self,
+        txn: &Transaction,
+        operator_public_key: &SecpPublicKey
+    ) -> Result<u64, NotSafe> {
+        let mut stmt = txn.prepare("SELECT seq from operator_socket_address where public_key = ?1")?;
+        Ok(stmt.query_row(params![operator_public_key.base64()], |row| {
+            let seq: u64 = row.get(0).unwrap();
+            Ok(seq)
+        })?)
+    }
+
+    pub fn query_owner_fee_recipient(
+        &self,
+        txn: &Transaction,
+        owner: &Address
+    ) -> Result<Address, NotSafe> {
+        let mut stmt = txn.prepare("SELECT fee_recipient from owner_fee_recipient where owner = ?1")?;
+        Ok(stmt.query_row(params![owner.to_string()], |row| {
+            let fee_recipient: String = row.get(0).unwrap();
+            Ok(Address::from_str(&fee_recipient).unwrap())
+        })?)
+    }
+
+    pub fn query_validator_fee_recipient(
+        &self,
+        txn: &Transaction,
+        validator_public_key: &PublicKey
+    ) -> Result<Address, NotSafe> {
+        let mut stmt = txn.prepare("select owner_fee_recipient.fee_recipient from validators join owner_fee_recipient on validators.owner_address = owner_fee_recipient.owner where validators.public_key = ?1")?;
+        match stmt.query_row(params![validator_public_key.as_hex_string()], |row| {
+            let fee_recipient: String = row.get(0).unwrap();
+            Ok(Address::from_str(&fee_recipient).unwrap())
+        }) {
+            Ok(f) => {
+                Ok(f)
+            },
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let fee_recipient = txn.query_row("SELECT owner_address from validators where public_key = ?1", params![validator_public_key.as_hex_string()], |row| {
+                    let fee_recipient: String = row.get(0).unwrap();
+                    Ok(Address::from_str(&fee_recipient).unwrap())
+                })?;
+                Ok(fee_recipient)
+            },
+            Err(e) => Err(e.into())
+        }
+    }
+
+    pub fn query_all_validators(
+        &self,
+        txn: &Transaction,
+    ) -> Result<Vec<PublicKey>, NotSafe> {
+        txn.prepare("select public_key from validators")?
+        .query_and_then(params![], |row| {
+            let public_key: String = row.get(0).unwrap();
+            Ok(PublicKey::from_str(&public_key).unwrap())
+        })?.collect()
+    }
+
+    pub fn query_validator_public_keys_by_owner(
+        &self,
+        txn: &Transaction,
+        owner: Address
+    ) -> Result<Vec<PublicKey>, NotSafe> {
+        txn.prepare("select public_key from validators where owner_address = ?1")?
+        .query_and_then(params![owner.to_string()], |row| {
+            let public_key: String = row.get(0).unwrap();
+            Ok(PublicKey::from_str(&public_key).unwrap())
+        })?.collect()
+    }
+
+    pub fn query_validator_registration_timestamp(
+        &self,
+        txn: &Transaction,
+        validator_public_key: &PublicKey
+    ) -> Result<u64, NotSafe> {
+        Ok(txn.prepare("select registration_timestamp from validators where public_key = ?1")?
+        .query_row(params![validator_public_key.as_hex_string()], |row| {
+            let registration_timestamp: u64 = row.get(0).unwrap();
+            Ok(registration_timestamp)
+        })?)
+    }
+
+    pub fn query_operator_public_key(
+        &self,
+        txn: &Transaction,
+        operator_id: u32
+    ) -> Result<Option<SecpPublicKey>, NotSafe> {
+        let mut stmt = txn.prepare("SELECT public_key from operators where id = ?1")?;
+        Ok(stmt.query_row(params![operator_id.to_string()], |row| {
+            let public_key: String = row.get(0).unwrap();
+            Ok(Some(SecpPublicKey::from_base64(&public_key).unwrap()))
+        })?)
     }
 }

@@ -3,18 +3,19 @@ pub mod operator_committee;
 pub mod report;
 pub mod database;
 pub mod models;
+pub mod proto;
 use bls::Error as BlsError;
 use std::net::SocketAddr;
-use types::{AttestationData, BeaconBlock, BlindedPayload, EthSpec, FullPayload, PublicKey};
+use types::{AttestationData, PublicKey};
 use async_trait::async_trait;
 use types::{Hash256, Keypair, Signature};
-use safestake_crypto::secp::PublicKey as SecpPublicKey;
-use tokio::sync::OnceCell;
+use safestake_crypto::secp::{PublicKey as SecpPublicKey, Signature as SecpSignature, Digest, SecretKey as SecpSecretKey};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::collections::HashSet;
-
-pub static OPERATOR_ID: OnceCell<u64> = OnceCell::const_new();
+use crate::operator::proto::*;
+use slog::{Logger, info, error};
+use dvf_utils::VERSION;
+use crate::operator::proto::safestake_client::SafestakeClient;
 
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
@@ -27,6 +28,7 @@ lazy_static! {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
+    SignatureNotFound(String),
     BlsError(BlsError),
     /// Key generation failed.
     KeyGenError(String),
@@ -67,9 +69,9 @@ pub trait TOperator: Sync + Send {
     fn id(&self) -> u32;
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError>;
     async fn is_active(&self) -> bool;
-    async fn attest(&self, attest_data: &AttestationData);
-    async fn propose_full_block(&self, full_block: &[u8]);
-    async fn propose_blinded_block(&self, blinded_block: &[u8]);
+    async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
+    async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);
+    async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
     fn shared_public_key(&self) -> PublicKey;
 }
 
@@ -88,11 +90,11 @@ impl TOperator for LocalOperator {
         true
     }
 
-    async fn attest(&self, attest_data: &AttestationData) { }
+    async fn attest(&self, _: &AttestationData, _: Hash256) { }
 
-    async fn propose_full_block(&self, full_block: &[u8]) { }
+    async fn propose_full_block(&self, _: &[u8], _: Hash256) { }
 
-    async fn propose_blinded_block(&self, blinded_block: &[u8]) { }
+    async fn propose_blinded_block(&self, _: &[u8], _: Hash256) { }
 
     fn id(&self) -> u32 {
         self.operator_id
@@ -104,27 +106,215 @@ impl TOperator for LocalOperator {
 }
 
 pub struct RemoteOperator {
+    pub self_operator_id: u32,
+    pub self_operator_secretkey: SecpSecretKey,
     pub operator_id: u32,
     pub base_address: SocketAddr,
+    pub validator_public_key: PublicKey,
     pub operator_node_pk: SecpPublicKey,
-    pub shared_public_key: PublicKey
+    pub shared_public_key: PublicKey,
+    pub logger: Logger
 }
 
 #[async_trait]
 impl TOperator for RemoteOperator {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
-        todo!()
+        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remote attest";
+                    "error" => %e
+                );
+                return Err(DvfError::SignatureNotFound(e.to_string()));
+            }
+        };
+        let request = tonic::Request::new(GetSignatureRequest {
+            version: VERSION,
+            msg: msg.0.to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+        match client.get_signature(request).await {
+            Ok(response) => {
+                Ok(Signature::deserialize(&response.into_inner().signature).unwrap())
+            },
+            Err(e) => {
+                Err(DvfError::SignatureNotFound(e.to_string()))
+            }
+        }
     }
 
     async fn is_active(&self) -> bool {
-        true
+        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remote active";
+                    "error" => %e
+                );
+                return false;
+            }
+        };
+        let random_hash = Hash256::random();
+        let request = tonic::Request::new(CheckLivenessRequest {
+            version: VERSION,
+            msg: random_hash.0.to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+
+        match client.check_liveness(request).await {
+            Ok(response) => {
+                match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
+                    Ok(sig) => {
+                        match sig.verify(&Digest::from(&random_hash.0), &self.operator_node_pk) {
+                            Ok(_) => {
+                                info!(
+                                    self.logger,
+                                    "operator liveness";
+                                    "operator" => self.operator_id
+                                );
+                                return true
+                            },
+                            Err(_) => {}
+                        }
+                    },  
+                    Err(_) => { }
+                }
+            },
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remove liveness";
+                    "error" => %e
+                );
+            }
+        }
+        false
     }
 
-    async fn attest(&self, attest_data: &AttestationData) { }
+    async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) { 
+        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remote attest";
+                    "error" => %e
+                );
+                return ;
+            }
+        };
+        let data = serde_json::to_string(attest_data).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
 
-    async fn propose_full_block(&self, full_block: &[u8]) { }
+        let request = tonic::Request::new(AttestRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domian_hash_signature: sig.flatten().to_vec(),
+            attestation_data: data.as_bytes().to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
 
-    async fn propose_blinded_block(&self, blinded_block: &[u8]) { }
+        match client.attest_data(request).await {
+            Ok(_) => {
+                info!(
+                    self.logger,
+                    "attestation";
+                    "signing root" => %domain_hash
+                );
+            },
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "attestation";
+                    "error" => %e
+                );
+            }
+        }
+    }
+
+    async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256) { 
+        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remote attest";
+                    "error" => %e
+                );
+                return ;
+            }
+        };
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(ProposeFullBlockRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domian_hash_signature: sig.flatten().to_vec(),
+            full_block_data: full_block.to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+
+        match client.propose_full_block(request).await {
+            Ok(_) => {
+                info!(
+                    self.logger,
+                    "propose full block";
+                    "signing root" => %domain_hash
+                );
+            },
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "propose full block";
+                    "error" => %e
+                );
+            }
+        }
+    }
+
+    async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256) { 
+        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "remote attest";
+                    "error" => %e
+                );
+                return ;
+            }
+        };
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(ProposeBlindedBlockRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domian_hash_signature: sig.flatten().to_vec(),
+            blinded_block_data: blinded_block.to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+
+        match client.propose_blinded_block(request).await {
+            Ok(_) => {
+                info!(
+                    self.logger,
+                    "propose blinded block";
+                    "signing root" => %domain_hash
+                );
+            },
+            Err(e) => {
+                error!(
+                    self.logger,
+                    "propose blinded block";
+                    "error" => %e
+                );
+            }
+        }
+    }
 
     fn id(&self) -> u32 {
         self.operator_id
@@ -132,5 +322,11 @@ impl TOperator for RemoteOperator {
 
     fn shared_public_key(&self) -> PublicKey {
         self.shared_public_key.clone()
+    }
+}
+
+impl RemoteOperator {
+    fn endpoint(&self) -> String {
+        format!("http://{}", self.base_address)
     }
 }

@@ -82,6 +82,7 @@ impl ApiTester {
             validator_dir.path().into(),
             Default::default(),
             log.clone(),
+            None
         )
         .await
         .unwrap();

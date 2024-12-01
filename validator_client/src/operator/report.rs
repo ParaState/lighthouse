@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 use reqwest::{Client, Error};
-use std::{fs::File, time::Duration};
+use std::time::Duration;
 use safestake_crypto::secp::{SecretKey, Signature, Digest};
 use keccak_hash::keccak;
 #[derive(Debug, PartialEq, Serialize)]
@@ -29,7 +29,7 @@ pub trait SignDigest {
         let ser_json =
             serde_json::to_string(self).map_err(|e| format!("failed to serialize {:?}", e))?;
         let digest = keccak(ser_json.as_bytes());
-        let sig = Signature::new(&Digest::from(digest.as_fixed_bytes()), secret).map_err(|e| {
+        let sig = Signature::new(&Digest::from(&digest.0), secret).map_err(|e| {
             format!("failed to sign {:?}", e)
         })?;
         Ok(hex::encode(sig.flatten()))

@@ -29,9 +29,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use types::graffiti::GraffitiString;
-use types::{Address, Graffiti, Keypair, PublicKey, PublicKeyBytes};
+use types::{Address, Graffiti, Keypair, PublicKey, PublicKeyBytes, Hash256};
 use url::{ParseError, Url};
 use validator_dir::Builder as ValidatorDirBuilder;
+use validator_dir::ShareBuilder;
+use tokio::sync::mpsc::Sender;
+use bls::Signature;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 
 use crate::key_cache;
@@ -229,6 +232,7 @@ impl InitializedValidator {
         web3_signer_client_map: &mut Option<HashMap<Web3SignerDefinition, Client>>,
         config: &Config,
         log: Logger,
+        store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>
     ) -> Result<Self, Error> {
         if !def.enabled {
             return Err(Error::UnableToInitializeDisabledValidator);
@@ -443,7 +447,8 @@ impl InitializedValidator {
                     voting_keystore_share,
                     voting_public_key: validator_public_key,
                     operator_committee: committee,
-                    keypair: voting_keypair
+                    keypair: voting_keypair,
+                    store_sender: store_sender.unwrap()
                 }
             },
         };
@@ -591,6 +596,7 @@ pub struct InitializedValidators {
     /// For logging via `slog`.
     log: Logger,
     config: Config,
+    store_sender: Sender<(Hash256, Signature, PublicKey)>
 }
 
 impl InitializedValidators {
@@ -600,6 +606,7 @@ impl InitializedValidators {
         validators_dir: PathBuf,
         config: Config,
         log: Logger,
+        store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>
     ) -> Result<Self, Error> {
         let mut this = Self {
             validators_dir,
@@ -608,6 +615,7 @@ impl InitializedValidators {
             web3_signer_client_map: None,
             config,
             log,
+            store_sender: store_sender.unwrap()
         };
         this.update_validators().await?;
         Ok(this)
@@ -732,6 +740,13 @@ impl InitializedValidators {
                     def.enabled = false;
                     None
                 }
+                SigningDefinition::DistributedKeystore { .. } if is_local_keystore => {
+                    def.enabled = false;
+                    self.definitions
+                        .save(&self.validators_dir)
+                        .map_err(Error::UnableToSaveDefinitions)?;
+                    None
+                }
                 _ => return Err(Error::InvalidActionOnValidator),
             }
         } else {
@@ -773,6 +788,20 @@ impl InitializedValidators {
                 drop(voting_keystore_lockfile.lock().take());
 
                 self.delete_keystore_or_validator_dir(voting_keystore_path, voting_keystore)?;
+            }
+
+            if let SigningMethod::DistributedKeystore {
+                ref voting_keystore_share_path,
+                ref voting_keystore_share_lockfile,
+                ref voting_keystore_share,
+                ..
+            } = *initialized_validator.signing_method
+            {
+                drop(voting_keystore_share_lockfile.lock().take());
+                self.delete_keystore_share_or_validator_dir(
+                    voting_keystore_share_path,
+                    voting_keystore_share,
+                )?;
             }
         }
 
@@ -824,6 +853,33 @@ impl InitializedValidators {
         // Otherwise just delete the keystore file.
         fs::remove_file(voting_keystore_path)
             .map_err(|e| Error::UnableToDeleteKeystore(voting_keystore_path.into(), e))?;
+        Ok(())
+    }
+
+    /// Attempt to delete the voting keystore file, or its entire validator directory.
+    ///
+    /// Some parts of the VC assume the existence of a validator based on the existence of a
+    /// directory in the validators dir named like a public key.
+    fn delete_keystore_share_or_validator_dir(
+        &self,
+        voting_keystore_share_path: &Path,
+        voting_keystore_share: &KeystoreShare,
+    ) -> Result<(), Error> {
+        // If the parent directory is a `ValidatorDir` within `self.validators_dir`, then
+        // delete the entire directory so that it may be recreated if the keystore is
+        // re-imported.
+        if let Some(validator_dir) = voting_keystore_share_path.parent() {
+            if validator_dir
+                == ShareBuilder::get_dir_path(&self.validators_dir, voting_keystore_share)
+            {
+                fs::remove_dir_all(validator_dir)
+                    .map_err(|e| Error::UnableToDeleteValidatorDir(validator_dir.into(), e))?;
+                return Ok(());
+            }
+        }
+        // Otherwise just delete the keystore file.
+        fs::remove_file(voting_keystore_share_path)
+            .map_err(|e| Error::UnableToDeleteKeystore(voting_keystore_share_path.into(), e))?;
         Ok(())
     }
 
@@ -1355,7 +1411,8 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut None,
                             &self.config,
-                            self.log.clone()
+                            self.log.clone(),
+                            None
                         )
                         .await
                         {
@@ -1407,7 +1464,8 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
-                            self.log.clone()
+                            self.log.clone(),
+                            None
                         )
                         .await
                         {
@@ -1457,7 +1515,8 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
-                            self.log.clone()
+                            self.log.clone(),
+                            Some(self.store_sender.clone())
                         )
                         .await
                         {
