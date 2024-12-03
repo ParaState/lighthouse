@@ -25,14 +25,18 @@ excluded_paths = [
     # Intentionally omitted, as per https://github.com/sigp/lighthouse/issues/1835
     "tests/.*/.*/ssz_static/Eth1Block/",
     "tests/.*/.*/ssz_static/PowBlock/",
+    # We no longer implement merge logic.
+    "tests/.*/bellatrix/fork_choice/on_merge_block",
     # light_client
-    "tests/.*/.*/light_client",
+    "tests/.*/.*/light_client/single_merkle_proof",
+    "tests/.*/.*/light_client/sync",
+    "tests/.*/electra/light_client/update_ranking",
     # LightClientStore
     "tests/.*/.*/ssz_static/LightClientStore",
     # LightClientSnapshot
     "tests/.*/.*/ssz_static/LightClientSnapshot",
     # One of the EF researchers likes to pack the tarballs on a Mac
-    ".*\.DS_Store.*",
+    ".*\\.DS_Store.*",
     # More Mac weirdness.
     "tests/mainnet/bellatrix/operations/deposit/pyspec_tests/deposit_with_previous_fork_version__valid_ineffective/._meta.yaml",
     # bls tests are moved to bls12-381-tests directory
@@ -44,13 +48,6 @@ excluded_paths = [
     "tests/.*/eip6110",
     "tests/.*/whisk",
     "tests/.*/eip7594",
-    # TODO(electra) re-enable once https://github.com/sigp/lighthouse/issues/6002 is resolved
-    "tests/.*/electra/ssz_static/LightClientUpdate",
-    "tests/.*/electra/ssz_static/LightClientFinalityUpdate",
-    "tests/.*/electra/ssz_static/LightClientBootstrap",
-    # TODO(electra) re-enable as DepositRequest when EF tests are updated
-    "tests/.*/electra/operations/deposit_receipt",
-    "tests/.*/electra/ssz_static/DepositReceipt"
 ]
 
 

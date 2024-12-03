@@ -77,9 +77,9 @@ pub struct Attestation<E: EthSpec> {
     #[superstruct(only(Electra), partial_getter(rename = "aggregation_bits_electra"))]
     pub aggregation_bits: BitList<E::MaxValidatorsPerSlot>,
     pub data: AttestationData,
+    pub signature: AggregateSignature,
     #[superstruct(only(Electra))]
     pub committee_bits: BitVector<E::MaxCommitteesPerSlot>,
-    pub signature: AggregateSignature,
 }
 
 impl<E: EthSpec> Hash for Attestation<E> {
@@ -233,7 +233,7 @@ impl<E: EthSpec> Attestation<E> {
     }
 }
 
-impl<'a, E: EthSpec> AttestationRef<'a, E> {
+impl<E: EthSpec> AttestationRef<'_, E> {
     pub fn clone_as_attestation(self) -> Attestation<E> {
         match self {
             Self::Base(att) => Attestation::Base(att.clone()),
@@ -412,13 +412,7 @@ impl<E: EthSpec> AttestationBase<E> {
     pub fn extend_aggregation_bits(
         &self,
     ) -> Result<BitList<E::MaxValidatorsPerSlot>, ssz_types::Error> {
-        let mut extended_aggregation_bits: BitList<E::MaxValidatorsPerSlot> =
-            BitList::with_capacity(self.aggregation_bits.len())?;
-
-        for (i, bit) in self.aggregation_bits.iter().enumerate() {
-            extended_aggregation_bits.set(i, bit)?;
-        }
-        Ok(extended_aggregation_bits)
+        self.aggregation_bits.resize::<E::MaxValidatorsPerSlot>()
     }
 }
 
@@ -428,7 +422,7 @@ impl<E: EthSpec> SlotData for Attestation<E> {
     }
 }
 
-impl<'a, E: EthSpec> SlotData for AttestationRef<'a, E> {
+impl<E: EthSpec> SlotData for AttestationRef<'_, E> {
     fn get_slot(&self) -> Slot {
         self.data().slot
     }

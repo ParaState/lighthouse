@@ -1,6 +1,7 @@
 use self::committee_cache::get_active_validator_indices;
 use crate::historical_summary::HistoricalSummary;
 use crate::test_utils::TestRandom;
+use crate::FixedBytesExtended;
 use crate::*;
 use compare_fields::CompareFields;
 use compare_fields_derive::CompareFields;
@@ -154,7 +155,6 @@ pub enum Error {
         current_fork: ForkName,
     },
     TotalActiveBalanceDiffUninitialized,
-    MissingImmutableValidator(usize),
     IndexNotSupported(usize),
     InvalidFlagIndex(usize),
     MerkleTreeError(merkle_proof::MerkleTreeError),
@@ -486,11 +486,7 @@ where
     // Electra
     #[superstruct(only(Electra), partial_getter(copy))]
     #[metastruct(exclude_from(tree_lists))]
-    #[serde(
-        with = "serde_utils::quoted_u64",
-    //TODO(electra) remove alias when ef tests are updated
-        alias = "deposit_receipts_start_index"
-    )]
+    #[serde(with = "serde_utils::quoted_u64")]
     pub deposit_requests_start_index: u64,
     #[superstruct(only(Electra), partial_getter(copy))]
     #[metastruct(exclude_from(tree_lists))]
@@ -897,6 +893,8 @@ impl<E: EthSpec> BeaconState<E> {
             return Err(Error::InsufficientValidators);
         }
 
+        let max_effective_balance = spec.max_effective_balance_for_fork(self.fork_name_unchecked());
+
         let mut i = 0;
         loop {
             let shuffled_index = compute_shuffled_index(
@@ -912,9 +910,7 @@ impl<E: EthSpec> BeaconState<E> {
             let random_byte = Self::shuffling_random_byte(i, seed)?;
             let effective_balance = self.get_effective_balance(candidate_index)?;
             if effective_balance.safe_mul(MAX_RANDOM_BYTE)?
-                >= spec
-                    .max_effective_balance
-                    .safe_mul(u64::from(random_byte))?
+                >= max_effective_balance.safe_mul(u64::from(random_byte))?
             {
                 return Ok(candidate_index);
             }
@@ -1042,7 +1038,7 @@ impl<E: EthSpec> BeaconState<E> {
         let epoch = slot.epoch(E::slots_per_epoch());
         let mut preimage = self
             .get_seed(epoch, Domain::BeaconProposer, spec)?
-            .as_bytes()
+            .as_slice()
             .to_vec();
         preimage.append(&mut int_to_bytes8(slot.as_u64()));
         Ok(hash(&preimage))
@@ -1095,6 +1091,7 @@ impl<E: EthSpec> BeaconState<E> {
         let active_validator_count = active_validator_indices.len();
 
         let seed = self.get_seed(epoch, Domain::SyncCommittee, spec)?;
+        let max_effective_balance = spec.max_effective_balance_for_fork(self.fork_name_unchecked());
 
         let mut i = 0;
         let mut sync_committee_indices = Vec::with_capacity(E::SyncCommitteeSize::to_usize());
@@ -1102,19 +1099,17 @@ impl<E: EthSpec> BeaconState<E> {
             let shuffled_index = compute_shuffled_index(
                 i.safe_rem(active_validator_count)?,
                 active_validator_count,
-                seed.as_bytes(),
+                seed.as_slice(),
                 spec.shuffle_round_count,
             )
             .ok_or(Error::UnableToShuffle)?;
             let candidate_index = *active_validator_indices
                 .get(shuffled_index)
                 .ok_or(Error::ShuffleIndexOutOfBounds(shuffled_index))?;
-            let random_byte = Self::shuffling_random_byte(i, seed.as_bytes())?;
+            let random_byte = Self::shuffling_random_byte(i, seed.as_slice())?;
             let effective_balance = self.get_validator(candidate_index)?.effective_balance;
             if effective_balance.safe_mul(MAX_RANDOM_BYTE)?
-                >= spec
-                    .max_effective_balance
-                    .safe_mul(u64::from(random_byte))?
+                >= max_effective_balance.safe_mul(u64::from(random_byte))?
             {
                 sync_committee_indices.push(candidate_index);
             }
@@ -1533,7 +1528,7 @@ impl<E: EthSpec> BeaconState<E> {
         let mut preimage = [0; NUM_DOMAIN_BYTES + NUM_EPOCH_BYTES + NUM_MIX_BYTES];
         preimage[0..NUM_DOMAIN_BYTES].copy_from_slice(&domain_bytes);
         preimage[NUM_DOMAIN_BYTES..MIX_OFFSET].copy_from_slice(&epoch_bytes);
-        preimage[MIX_OFFSET..].copy_from_slice(mix.as_bytes());
+        preimage[MIX_OFFSET..].copy_from_slice(mix.as_slice());
 
         Ok(Hash256::from_slice(&hash(&preimage)))
     }
@@ -1550,6 +1545,35 @@ impl<E: EthSpec> BeaconState<E> {
         self.validators_mut()
             .get_mut(validator_index)
             .ok_or(Error::UnknownValidator(validator_index))
+    }
+
+    pub fn add_validator_to_registry(
+        &mut self,
+        deposit_data: &DepositData,
+        spec: &ChainSpec,
+    ) -> Result<(), Error> {
+        let fork = self.fork_name_unchecked();
+        let amount = if fork.electra_enabled() {
+            0
+        } else {
+            deposit_data.amount
+        };
+        self.validators_mut()
+            .push(Validator::from_deposit(deposit_data, amount, fork, spec))?;
+        self.balances_mut().push(amount)?;
+
+        // Altair or later initializations.
+        if let Ok(previous_epoch_participation) = self.previous_epoch_participation_mut() {
+            previous_epoch_participation.push(ParticipationFlags::default())?;
+        }
+        if let Ok(current_epoch_participation) = self.current_epoch_participation_mut() {
+            current_epoch_participation.push(ParticipationFlags::default())?;
+        }
+        if let Ok(inactivity_scores) = self.inactivity_scores_mut() {
+            inactivity_scores.push(0)?;
+        }
+
+        Ok(())
     }
 
     /// Safe copy-on-write accessor for the `validators` list.
@@ -2135,7 +2159,7 @@ impl<E: EthSpec> BeaconState<E> {
         let max_effective_balance = self
             .validators()
             .get(validator_index)
-            .map(|validator| validator.get_validator_max_effective_balance(spec, current_fork))
+            .map(|validator| validator.get_max_effective_balance(spec, current_fork))
             .ok_or(Error::UnknownValidator(validator_index))?;
         Ok(std::cmp::min(
             *self
@@ -2219,8 +2243,9 @@ impl<E: EthSpec> BeaconState<E> {
             .get_mut(validator_index)
             .ok_or(Error::UnknownValidator(validator_index))?;
         if validator.has_eth1_withdrawal_credential(spec) {
-            validator.withdrawal_credentials.as_fixed_bytes_mut()[0] =
+            AsMut::<[u8; 32]>::as_mut(&mut validator.withdrawal_credentials)[0] =
                 spec.compounding_withdrawal_prefix_byte;
+
             self.queue_excess_active_balance(validator_index, spec)?;
         }
         Ok(())
@@ -2480,33 +2505,64 @@ impl<E: EthSpec> BeaconState<E> {
         Ok(())
     }
 
-    pub fn compute_merkle_proof(&self, generalized_index: usize) -> Result<Vec<Hash256>, Error> {
-        // 1. Convert generalized index to field index.
-        let field_index = match generalized_index {
+    pub fn compute_current_sync_committee_proof(&self) -> Result<Vec<Hash256>, Error> {
+        // Sync committees are top-level fields, subtract off the generalized indices
+        // for the internal nodes. Result should be 22 or 23, the field offset of the committee
+        // in the `BeaconState`:
+        // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#beaconstate
+        let field_index = if self.fork_name_unchecked().electra_enabled() {
+            light_client_update::CURRENT_SYNC_COMMITTEE_INDEX_ELECTRA
+        } else {
             light_client_update::CURRENT_SYNC_COMMITTEE_INDEX
-            | light_client_update::NEXT_SYNC_COMMITTEE_INDEX => {
-                // Sync committees are top-level fields, subtract off the generalized indices
-                // for the internal nodes. Result should be 22 or 23, the field offset of the committee
-                // in the `BeaconState`:
-                // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#beaconstate
-                generalized_index
-                    .checked_sub(self.num_fields_pow2())
-                    .ok_or(Error::IndexNotSupported(generalized_index))?
-            }
-            light_client_update::FINALIZED_ROOT_INDEX => {
-                // Finalized root is the right child of `finalized_checkpoint`, divide by two to get
-                // the generalized index of `state.finalized_checkpoint`.
-                let finalized_checkpoint_generalized_index = generalized_index / 2;
-                // Subtract off the internal nodes. Result should be 105/2 - 32 = 20 which matches
-                // position of `finalized_checkpoint` in `BeaconState`.
-                finalized_checkpoint_generalized_index
-                    .checked_sub(self.num_fields_pow2())
-                    .ok_or(Error::IndexNotSupported(generalized_index))?
-            }
-            _ => return Err(Error::IndexNotSupported(generalized_index)),
         };
+        let leaves = self.get_beacon_state_leaves();
+        self.generate_proof(field_index, &leaves)
+    }
 
-        // 2. Get all `BeaconState` leaves.
+    pub fn compute_next_sync_committee_proof(&self) -> Result<Vec<Hash256>, Error> {
+        // Sync committees are top-level fields, subtract off the generalized indices
+        // for the internal nodes. Result should be 22 or 23, the field offset of the committee
+        // in the `BeaconState`:
+        // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#beaconstate
+        let field_index = if self.fork_name_unchecked().electra_enabled() {
+            light_client_update::NEXT_SYNC_COMMITTEE_INDEX_ELECTRA
+        } else {
+            light_client_update::NEXT_SYNC_COMMITTEE_INDEX
+        };
+        let leaves = self.get_beacon_state_leaves();
+        self.generate_proof(field_index, &leaves)
+    }
+
+    pub fn compute_finalized_root_proof(&self) -> Result<Vec<Hash256>, Error> {
+        // Finalized root is the right child of `finalized_checkpoint`, divide by two to get
+        // the generalized index of `state.finalized_checkpoint`.
+        let field_index = if self.fork_name_unchecked().electra_enabled() {
+            // Index should be 169/2 - 64 = 20 which matches the position
+            // of `finalized_checkpoint` in `BeaconState`
+            light_client_update::FINALIZED_ROOT_INDEX_ELECTRA
+        } else {
+            // Index should be 105/2 - 32 = 20 which matches the position
+            // of `finalized_checkpoint` in `BeaconState`
+            light_client_update::FINALIZED_ROOT_INDEX
+        };
+        let leaves = self.get_beacon_state_leaves();
+        let mut proof = self.generate_proof(field_index, &leaves)?;
+        proof.insert(0, self.finalized_checkpoint().epoch.tree_hash_root());
+        Ok(proof)
+    }
+
+    fn generate_proof(
+        &self,
+        field_index: usize,
+        leaves: &[Hash256],
+    ) -> Result<Vec<Hash256>, Error> {
+        let depth = self.num_fields_pow2().ilog2() as usize;
+        let tree = merkle_proof::MerkleTree::create(leaves, depth);
+        let (_, proof) = tree.generate_proof(field_index, depth)?;
+        Ok(proof)
+    }
+
+    fn get_beacon_state_leaves(&self) -> Vec<Hash256> {
         let mut leaves = vec![];
         #[allow(clippy::arithmetic_side_effects)]
         match self {
@@ -2542,18 +2598,7 @@ impl<E: EthSpec> BeaconState<E> {
             }
         };
 
-        // 3. Make deposit tree.
-        // Use the depth of the `BeaconState` fields (i.e. `log2(32) = 5`).
-        let depth = light_client_update::CURRENT_SYNC_COMMITTEE_PROOF_LEN;
-        let tree = merkle_proof::MerkleTree::create(&leaves, depth);
-        let (_, mut proof) = tree.generate_proof(field_index, depth)?;
-
-        // 4. If we're proving the finalized root, patch in the finalized epoch to complete the proof.
-        if generalized_index == light_client_update::FINALIZED_ROOT_INDEX {
-            proof.insert(0, self.finalized_checkpoint().epoch.tree_hash_root());
-        }
-
-        Ok(proof)
+        leaves
     }
 }
 

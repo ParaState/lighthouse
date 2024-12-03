@@ -1,12 +1,12 @@
 use core::panic;
 
-use crate::generic_threshold::TThresholdSignature;
 use crate::blst_utils::u64_to_blst_scalar;
-use dvf_utils::DvfError;
+use crate::generic_threshold::TThresholdSignature;
 use bls::INFINITY_SIGNATURE;
 use bls::{Hash256, PublicKey, Signature};
 pub use blst::min_pk as blst_core;
 use blst::{blst_p2, blst_p2_affine, blst_scalar};
+use dvf_utils::DvfError;
 
 pub const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 pub const RAND_BITS: usize = 64;

@@ -80,10 +80,7 @@ pub struct BeaconBlock<E: EthSpec, Payload: AbstractExecPayload<E> = FullPayload
 pub type BlindedBeaconBlock<E> = BeaconBlock<E, BlindedPayload<E>>;
 
 impl<E: EthSpec, Payload: AbstractExecPayload<E>> SignedRoot for BeaconBlock<E, Payload> {}
-impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> SignedRoot
-    for BeaconBlockRef<'a, E, Payload>
-{
-}
+impl<E: EthSpec, Payload: AbstractExecPayload<E>> SignedRoot for BeaconBlockRef<'_, E, Payload> {}
 
 /// Empty block trait for each block variant to implement.
 pub trait EmptyBlock {
@@ -507,7 +504,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockCapella<E, Payload>
                 message: BlsToExecutionChange {
                     validator_index: 0,
                     from_bls_pubkey: PublicKeyBytes::empty(),
-                    to_execution_address: Address::zero(),
+                    to_execution_address: Address::ZERO,
                 },
                 signature: Signature::empty()
             };
@@ -637,7 +634,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockElectra<E, Payload>
                 message: BlsToExecutionChange {
                     validator_index: 0,
                     from_bls_pubkey: PublicKeyBytes::empty(),
-                    to_execution_address: Address::zero(),
+                    to_execution_address: Address::ZERO,
                 },
                 signature: Signature::empty()
             };
@@ -670,7 +667,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockElectra<E, Payload>
                 graffiti: Graffiti::default(),
                 execution_payload: Payload::Electra::default(),
                 blob_kzg_commitments: VariableList::empty(),
-                consolidations: VariableList::empty(),
+                execution_requests: ExecutionRequests::default(),
             },
         }
     }
@@ -701,7 +698,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockElec
                 execution_payload: Payload::Electra::default(),
                 bls_to_execution_changes: VariableList::empty(),
                 blob_kzg_commitments: VariableList::empty(),
-                consolidations: VariableList::empty(),
+                execution_requests: ExecutionRequests::default(),
             },
         }
     }

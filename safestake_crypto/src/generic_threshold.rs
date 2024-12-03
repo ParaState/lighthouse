@@ -1,10 +1,10 @@
 use crate::define::MODULUS;
 use crate::math::bigint_ext::Ring;
 use crate::math::polynomial::Polynomial;
-use dvf_utils::DvfError;
 use crate::rand_utils::RandUtilsRng;
 use crate::rand_utils::Sample;
 use bls::{Keypair, PublicKey, SecretKey, Signature, SECRET_KEY_BYTES_LEN};
+use dvf_utils::DvfError;
 use num_bigint::ToBigInt;
 use num_bigint::{BigInt, Sign};
 use std::collections::{HashMap, HashSet};
@@ -166,7 +166,10 @@ where
         msg: Hash256,
     ) -> Result<Signature, DvfError> {
         if sigs.len() != pks.len() {
-            return Err(DvfError::SizeMisMatch { x: sigs.len(), y: pks.len() });
+            return Err(DvfError::SizeMisMatch {
+                x: sigs.len(),
+                y: pks.len(),
+            });
         }
         if sigs.len() != ids.len() {
             return Err(DvfError::SizeMisMatch {

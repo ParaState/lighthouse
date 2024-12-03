@@ -350,11 +350,12 @@ impl<E: EthSpec> Case for ForkChoiceTest<E> {
 /// A testing rig used to execute a test case.
 struct Tester<E: EthSpec> {
     harness: BeaconChainHarness<EphemeralHarnessType<E>>,
-    spec: ChainSpec,
+    spec: Arc<ChainSpec>,
 }
 
 impl<E: EthSpec> Tester<E> {
     pub fn new(case: &ForkChoiceTest<E>, spec: ChainSpec) -> Result<Self, Error> {
+        let spec = Arc::new(spec);
         let genesis_time = case.anchor_state.genesis_time();
 
         if case.anchor_state.slot() != spec.genesis_slot {
@@ -870,7 +871,7 @@ pub struct ManuallyVerifiedAttestation<'a, T: BeaconChainTypes> {
     indexed_attestation: IndexedAttestation<T::EthSpec>,
 }
 
-impl<'a, T: BeaconChainTypes> VerifiedAttestation<T> for ManuallyVerifiedAttestation<'a, T> {
+impl<T: BeaconChainTypes> VerifiedAttestation<T> for ManuallyVerifiedAttestation<'_, T> {
     fn attestation(&self) -> AttestationRef<T::EthSpec> {
         self.attestation.to_ref()
     }

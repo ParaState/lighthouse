@@ -121,7 +121,7 @@ impl AsRef<[u8]> for PublicKey {
 }
 
 /// Represents a secret key (in bytes).
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct SecretKey(pub [u8; 32]);
 
 impl SecretKey {

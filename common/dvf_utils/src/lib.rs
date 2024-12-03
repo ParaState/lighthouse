@@ -1,5 +1,5 @@
 use bls::Error as BlsError;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
@@ -48,10 +48,12 @@ pub const MAJOR_VERSION: u64 = 3;
 /// Up to 1 million
 pub const MINOR_VERSION: u64 = 5;
 
-pub static VERSION: u64 = ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + MINOR_VERSION;
+pub static VERSION: u64 =
+    ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + MINOR_VERSION;
 
 pub const SOFTWARE_MINOR_VERSION: u64 = 5;
-pub static SOFTWARE_VERSION: u64 = ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + SOFTWARE_MINOR_VERSION;
+pub static SOFTWARE_VERSION: u64 =
+    ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + SOFTWARE_MINOR_VERSION;
 
 pub static DVF_STORE_PATH: &str = "dvf_store";
 pub static DVF_NODE_SECRET_PATH: &str = "node_key.json";

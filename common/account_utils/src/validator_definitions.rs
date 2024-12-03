@@ -4,14 +4,13 @@
 //! attempt) to load into the `crate::intialized_validators::InitializedValidators` struct.
 
 use crate::{
-    default_keystore_password_path, default_keystore_share_password_path,
-    default_operator_committee_definition_path, read_password_string, write_file_via_temporary,
-    ZeroizeString,
+    default_keystore_password_path, read_password_string, write_file_via_temporary, ZeroizeString,
 };
 use directory::ensure_dir_exists;
 use eth2_keystore::Keystore;
 use eth2_keystore_share::KeystoreShare;
 use regex::Regex;
+use safestake_crypto::secret::Secret;
 use serde::{Deserialize, Serialize};
 use slog::{error, Logger};
 use std::collections::HashSet;
@@ -114,6 +113,8 @@ pub enum SigningDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         operator_committee_definition_path: Option<PathBuf>,
         operator_id: u32,
+        node_secret: Secret,
+        safestake_api: String,
     },
 }
 
@@ -267,6 +268,8 @@ impl ValidatorDefinition {
         prefer_builder_proposals: Option<bool>,
         operator_committee_definition_path: P,
         operator_id: u32,
+        node_secret: Secret,
+        safestake_api: String,
     ) -> Result<Self, Error> {
         let voting_keystore_share_path = voting_keystore_share_path.as_ref().into();
         let keystore_share = KeystoreShare::from_json_file(&voting_keystore_share_path)
@@ -297,6 +300,8 @@ impl ValidatorDefinition {
                     operator_committee_definition_path.as_ref().into(),
                 ),
                 operator_id,
+                node_secret,
+                safestake_api,
             },
         })
     }
@@ -448,130 +453,6 @@ impl ValidatorDefinitions {
                         voting_keystore_path,
                         voting_keystore_password_path,
                         voting_keystore_password: None,
-                    },
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let new_defs_count = new_defs.len();
-
-        self.0.append(&mut new_defs);
-
-        Ok(new_defs_count)
-    }
-
-    /// Perform a recursive, exhaustive search through `validators_dir` and add any keystores
-    /// matching the `validator_dir::VOTING_KEYSTORE_FILE` file name.
-    ///
-    /// Returns the count of *new* keystores that were added to `self` during this search.
-    ///
-    /// ## Notes
-    ///
-    /// Determines the path for the password file based upon the scheme defined by
-    /// `account_utils::default_keystore_password_path`.
-    ///
-    /// If a keystore cannot be parsed the function does not exit early. Instead it logs an `error`
-    /// and continues searching.
-    pub fn discover_distributed_keystores<P: AsRef<Path>>(
-        &mut self,
-        validators_dir: P,
-        secrets_dir: P,
-        log: &Logger,
-    ) -> Result<usize, Error> {
-        let mut keystore_share_paths = vec![];
-        recursively_find_voting_keystore_shares(validators_dir.as_ref(), &mut keystore_share_paths)
-            .map_err(Error::UnableToSearchForKeystores)?;
-
-        let known_paths: HashSet<&PathBuf> = self
-            .0
-            .iter()
-            .filter_map(|def| match &def.signing_definition {
-                SigningDefinition::LocalKeystore { .. } => None,
-                SigningDefinition::Web3Signer { .. } => None,
-                SigningDefinition::DistributedKeystore {
-                    voting_keystore_share_path,
-                    ..
-                } => Some(voting_keystore_share_path),
-            })
-            .collect();
-
-        let known_pubkeys: HashSet<PublicKey> = self
-            .0
-            .iter()
-            .map(|def| def.voting_public_key.clone())
-            .collect();
-
-        let mut new_defs = keystore_share_paths
-            .into_iter()
-            .filter_map(|voting_keystore_share_path| {
-                if known_paths.contains(&voting_keystore_share_path) {
-                    return None;
-                }
-
-                let keystore_share_result = File::options()
-                    .read(true)
-                    .create(false)
-                    .open(&voting_keystore_share_path)
-                    .map_err(|e| format!("{:?}", e))
-                    .and_then(|file| {
-                        KeystoreShare::from_json_reader(file).map_err(|e| format!("{:?}", e))
-                    });
-
-                let keystore_share = match keystore_share_result {
-                    Ok(keystore_share) => keystore_share,
-                    Err(e) => {
-                        error!(
-                            log,
-                            "Unable to read validator keystore share";
-                            "error" => e,
-                            "keystore share" => format!("{:?}", voting_keystore_share_path)
-                        );
-                        return None;
-                    }
-                };
-
-                let voting_keystore_share_password_path = Some(
-                    default_keystore_share_password_path(&keystore_share, secrets_dir.as_ref()),
-                )
-                .filter(|path| path.exists());
-
-                let operator_committee_definition_path =
-                    Some(default_operator_committee_definition_path(
-                        &keystore_share.master_public_key,
-                        validators_dir.as_ref(),
-                    ))
-                    .filter(|path| path.exists());
-
-                // Extract operator id
-                let operator_id = keystore_share.share_id;
-
-                // Get the voting public key
-                //let voting_public_key = get_validator_public_key(operator_committee_index);
-                let voting_public_key = keystore_share.master_public_key.clone();
-                if known_pubkeys.contains(&voting_public_key) {
-                    return None;
-                }
-
-                Some(ValidatorDefinition {
-                    enabled: true,
-                    voting_public_key,
-                    description: keystore_share
-                        .keystore
-                        .description()
-                        .unwrap_or("")
-                        .to_string(),
-                    graffiti: None,
-                    suggested_fee_recipient: None,
-                    gas_limit: None,
-                    builder_proposals: None,
-                    builder_boost_factor: None,
-                    prefer_builder_proposals: None,
-                    signing_definition: SigningDefinition::DistributedKeystore {
-                        voting_keystore_share_path,
-                        voting_keystore_share_password_path,
-                        voting_keystore_share_password: None,
-                        operator_committee_definition_path,
-                        operator_id,
                     },
                 })
             })

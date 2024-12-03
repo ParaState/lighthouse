@@ -27,8 +27,6 @@ pub struct BasePreset {
     #[serde(with = "serde_utils::quoted_u64")]
     pub hysteresis_upward_multiplier: u64,
     #[serde(with = "serde_utils::quoted_u64")]
-    pub safe_slots_to_update_justified: u64,
-    #[serde(with = "serde_utils::quoted_u64")]
     pub min_deposit_amount: u64,
     #[serde(with = "serde_utils::quoted_u64")]
     pub max_effective_balance: u64,
@@ -90,7 +88,6 @@ impl BasePreset {
             hysteresis_quotient: spec.hysteresis_quotient,
             hysteresis_downward_multiplier: spec.hysteresis_downward_multiplier,
             hysteresis_upward_multiplier: spec.hysteresis_upward_multiplier,
-            safe_slots_to_update_justified: spec.safe_slots_to_update_justified,
             min_deposit_amount: spec.min_deposit_amount,
             max_effective_balance: spec.max_effective_balance,
             effective_balance_increment: spec.effective_balance_increment,
@@ -246,7 +243,7 @@ pub struct ElectraPreset {
     #[serde(with = "serde_utils::quoted_u64")]
     pub pending_consolidations_limit: u64,
     #[serde(with = "serde_utils::quoted_u64")]
-    pub max_consolidations: u64,
+    pub max_consolidation_requests_per_payload: u64,
     #[serde(with = "serde_utils::quoted_u64")]
     pub max_deposit_requests_per_payload: u64,
     #[serde(with = "serde_utils::quoted_u64")]
@@ -269,7 +266,8 @@ impl ElectraPreset {
             pending_balance_deposits_limit: E::pending_balance_deposits_limit() as u64,
             pending_partial_withdrawals_limit: E::pending_partial_withdrawals_limit() as u64,
             pending_consolidations_limit: E::pending_consolidations_limit() as u64,
-            max_consolidations: E::max_consolidations() as u64,
+            max_consolidation_requests_per_payload: E::max_consolidation_requests_per_payload()
+                as u64,
             max_deposit_requests_per_payload: E::max_deposit_requests_per_payload() as u64,
             max_attester_slashings_electra: E::max_attester_slashings_electra() as u64,
             max_attestations_electra: E::max_attestations_electra() as u64,

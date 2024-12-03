@@ -18,11 +18,7 @@ pub struct KeystoreShare {
 }
 
 impl KeystoreShare {
-    pub fn new(
-        keystore: Keystore,
-        master_public_key: PublicKey,
-        share_id: u32,
-    ) -> Self {
+    pub fn new(keystore: Keystore, master_public_key: PublicKey, share_id: u32) -> Self {
         Self {
             keystore,
             master_public_key,

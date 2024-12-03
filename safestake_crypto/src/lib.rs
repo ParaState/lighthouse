@@ -1,11 +1,11 @@
-pub mod secp;
-pub mod elgamal;
-pub mod define;
-pub mod generic_threshold;
 pub mod blst_utils;
-pub mod rand_utils;
-pub mod math;
+pub mod define;
+pub mod elgamal;
+pub mod generic_threshold;
 pub mod impls;
+pub mod math;
+pub mod rand_utils;
+pub mod secp;
 pub mod secret;
 
 macro_rules! define_mod {
@@ -21,8 +21,5 @@ macro_rules! define_mod {
     };
 }
 
-define_mod!(
-    blst_threshold_implementations,
-    crate::impls::blst::types
-);
+define_mod!(blst_threshold_implementations, crate::impls::blst::types);
 pub use blst_threshold_implementations::*;

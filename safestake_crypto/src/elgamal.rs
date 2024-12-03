@@ -1,9 +1,9 @@
+use crate::secp::SecretKey as SecpSecretKey;
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes128Gcm, Error, Key, KeyInit, Nonce};
 use rand::Rng;
 use secp256k1::{ecdh, All, PublicKey, Secp256k1, SecretKey};
 use sha256::digest;
-use crate::secp::SecretKey as SecpSecretKey;
 #[derive(PartialEq, Debug)]
 pub struct Ciphertext {
     temp_pk: PublicKey,
@@ -167,8 +167,10 @@ mod tests {
         let ct_bytes = ct.to_bytes();
         println!("ct {}", ct_bytes.len());
         let ct2 = Ciphertext::from_bytes(ct_bytes.as_slice());
-        
-        let plain = elgamal.decrypt(&ct2, &crate::secp::SecretKey(sk.as_ref().clone())).unwrap();
+
+        let plain = elgamal
+            .decrypt(&ct2, &crate::secp::SecretKey(sk.as_ref().clone()))
+            .unwrap();
         println!("Message: {:?}", String::from_utf8(plain));
     }
 
@@ -188,7 +190,9 @@ mod tests {
         let sk = SecretKey::from_slice(sk_bytes.as_slice()).unwrap();
         let ct = Ciphertext::from_bytes(ct_bytes.as_slice());
 
-        let plain = elgamal.decrypt(&ct, &crate::secp::SecretKey(sk.as_ref().clone())).unwrap();
+        let plain = elgamal
+            .decrypt(&ct, &crate::secp::SecretKey(sk.as_ref().clone()))
+            .unwrap();
         println!("Message: {:?}", String::from_utf8(plain));
     }
 

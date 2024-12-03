@@ -1,3 +1,4 @@
+use crate::metrics::{self, scrape_for_metrics};
 use crate::{ForkChoiceStore, InvalidationOperation};
 use proto_array::{
     Block as ProtoBlock, DisallowedReOrgOffsets, ExecutionStatus, ProposerHeadError,
@@ -15,8 +16,8 @@ use std::time::Duration;
 use types::{
     consts::bellatrix::INTERVALS_PER_SLOT, AbstractExecPayload, AttestationShufflingId,
     AttesterSlashingRef, BeaconBlockRef, BeaconState, BeaconStateError, ChainSpec, Checkpoint,
-    Epoch, EthSpec, ExecPayload, ExecutionBlockHash, Hash256, IndexedAttestationRef, RelativeEpoch,
-    SignedBeaconBlock, Slot,
+    Epoch, EthSpec, ExecPayload, ExecutionBlockHash, FixedBytesExtended, Hash256,
+    IndexedAttestationRef, RelativeEpoch, SignedBeaconBlock, Slot,
 };
 
 #[derive(Debug)]
@@ -260,6 +261,11 @@ fn dequeue_attestations(
             .iter()
             .position(|a| a.slot >= current_slot)
             .unwrap_or(queued_attestations.len()),
+    );
+
+    metrics::inc_counter_by(
+        &metrics::FORK_CHOICE_DEQUEUED_ATTESTATIONS,
+        queued_attestations.len() as u64,
     );
 
     std::mem::replace(queued_attestations, remaining)
@@ -649,6 +655,8 @@ where
         payload_verification_status: PayloadVerificationStatus,
         spec: &ChainSpec,
     ) -> Result<(), Error<T::Error>> {
+        let _timer = metrics::start_timer(&metrics::FORK_CHOICE_ON_BLOCK_TIMES);
+
         // If this block has already been processed we do not need to reprocess it.
         // We check this immediately in case re-processing the block mutates some property of the
         // global fork choice store, e.g. the justified checkpoints or the proposer boost root.
@@ -1040,6 +1048,8 @@ where
         attestation: IndexedAttestationRef<E>,
         is_from_block: AttestationFromBlock,
     ) -> Result<(), Error<T::Error>> {
+        let _timer = metrics::start_timer(&metrics::FORK_CHOICE_ON_ATTESTATION_TIMES);
+
         self.update_time(system_time_current_slot)?;
 
         // Ignore any attestations to the zero hash.
@@ -1087,6 +1097,8 @@ where
     ///
     /// We assume that the attester slashing provided to this function has already been verified.
     pub fn on_attester_slashing(&mut self, slashing: AttesterSlashingRef<'_, E>) {
+        let _timer = metrics::start_timer(&metrics::FORK_CHOICE_ON_ATTESTER_SLASHING_TIMES);
+
         let attesting_indices_set = |att: IndexedAttestationRef<'_, E>| {
             att.attesting_indices_iter()
                 .copied()
@@ -1288,43 +1300,6 @@ where
         }
     }
 
-    /// Returns `Ok(false)` if a block is not viable to be imported optimistically.
-    ///
-    /// ## Notes
-    ///
-    /// Equivalent to the function with the same name in the optimistic sync specs:
-    ///
-    /// https://github.com/ethereum/consensus-specs/blob/dev/sync/optimistic.md#helpers
-    pub fn is_optimistic_candidate_block(
-        &self,
-        current_slot: Slot,
-        block_slot: Slot,
-        block_parent_root: &Hash256,
-        spec: &ChainSpec,
-    ) -> Result<bool, Error<T::Error>> {
-        // If the block is sufficiently old, import it.
-        if block_slot + spec.safe_slots_to_import_optimistically <= current_slot {
-            return Ok(true);
-        }
-
-        // If the parent block has execution enabled, always import the block.
-        //
-        // See:
-        //
-        // https://github.com/ethereum/consensus-specs/pull/2844
-        if self
-            .proto_array
-            .get_block(block_parent_root)
-            .map_or(false, |parent| {
-                parent.execution_status.is_execution_enabled()
-            })
-        {
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
     /// Return the current finalized checkpoint.
     pub fn finalized_checkpoint(&self) -> Checkpoint {
         *self.fc_store.finalized_checkpoint()
@@ -1501,6 +1476,11 @@ where
             proto_array_bytes: self.proto_array().as_bytes(),
             queued_attestations: self.queued_attestations().to_vec(),
         }
+    }
+
+    /// Update the global metrics `DEFAULT_REGISTRY` with info from the fork choice
+    pub fn scrape_for_metrics(&self) {
+        scrape_for_metrics(self);
     }
 }
 

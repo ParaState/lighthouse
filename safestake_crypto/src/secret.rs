@@ -1,22 +1,20 @@
+use crate::secp::{generate_production_keypair, PublicKey, SecretKey};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::os::unix::fs::PermissionsExt;
 use std::fs::Permissions;
 use std::fs::{self, OpenOptions};
 use std::io::BufWriter;
 use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use serde::de::DeserializeOwned;
-use crate::secp::{PublicKey, SecretKey, generate_production_keypair};
 
-
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Secret {
     pub name: PublicKey,
     pub secret: SecretKey,
 }
 
 pub trait Export: Serialize + DeserializeOwned {
-
     fn read(path: &PathBuf) -> Result<Self, String> {
         let reader = || -> Result<Self, std::io::Error> {
             let data = fs::read(path)?;
@@ -52,7 +50,7 @@ impl Secret {
         #[derive(Serialize)]
         struct SecretHex {
             name: String,
-            secret: String
+            secret: String,
         }
 
         let writer = || -> Result<(), std::io::Error> {
@@ -60,7 +58,7 @@ impl Secret {
             let mut writer = BufWriter::new(file);
             let secret_hex = SecretHex {
                 name: hex::encode(self.name.0),
-                secret: hex::encode(self.secret.0)
+                secret: hex::encode(self.secret.0),
             };
             let data = serde_json::to_string_pretty(&secret_hex).unwrap();
             writer.write_all(data.as_ref())?;

@@ -1,8 +1,15 @@
+use crate::PeerDASTrustedSetup;
 use c_kzg::{BYTES_PER_G1_POINT, BYTES_PER_G2_POINT};
 use serde::{
     de::{self, Deserializer, Visitor},
     Deserialize, Serialize,
 };
+
+pub const TRUSTED_SETUP_BYTES: &[u8] = include_bytes!("../trusted_setup.json");
+
+pub fn get_trusted_setup() -> Vec<u8> {
+    TRUSTED_SETUP_BYTES.into()
+}
 
 /// Wrapper over a BLS G1 point's byte representation.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +50,28 @@ impl TrustedSetup {
     }
 }
 
+impl From<&TrustedSetup> for PeerDASTrustedSetup {
+    fn from(trusted_setup: &TrustedSetup) -> Self {
+        Self {
+            g1_monomial: trusted_setup
+                .g1_monomial_points
+                .iter()
+                .map(|g1_point| format!("0x{}", hex::encode(g1_point.0)))
+                .collect::<Vec<_>>(),
+            g1_lagrange: trusted_setup
+                .g1_points
+                .iter()
+                .map(|g1_point| format!("0x{}", hex::encode(g1_point.0)))
+                .collect::<Vec<_>>(),
+            g2_monomial: trusted_setup
+                .g2_points
+                .iter()
+                .map(|g2_point| format!("0x{}", hex::encode(g2_point.0)))
+                .collect::<Vec<_>>(),
+        }
+    }
+}
+
 impl Serialize for G1Point {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -70,7 +99,7 @@ impl<'de> Deserialize<'de> for G1Point {
     {
         struct G1PointVisitor;
 
-        impl<'de> Visitor<'de> for G1PointVisitor {
+        impl Visitor<'_> for G1PointVisitor {
             type Value = G1Point;
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("A 48 byte hex encoded string")
@@ -106,7 +135,7 @@ impl<'de> Deserialize<'de> for G2Point {
     {
         struct G2PointVisitor;
 
-        impl<'de> Visitor<'de> for G2PointVisitor {
+        impl Visitor<'_> for G2PointVisitor {
             type Value = G2Point;
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("A 96 byte hex encoded string")

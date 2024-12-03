@@ -1,8 +1,8 @@
+use crate::{write_password_to_file, BuilderError, ValidatorDir};
 use eth2_keystore::PlainText;
 use eth2_keystore_share::KeystoreShare;
-use std::path::{Path, PathBuf};
-use crate::{BuilderError, ValidatorDir, write_password_to_file};
 use std::fs::{create_dir_all, File};
+use std::path::{Path, PathBuf};
 
 pub const VOTING_KEYSTORE_SHARE_FILE: &str = "voting-keystore-share.json";
 
@@ -78,10 +78,14 @@ impl ShareBuilder {
     }
 }
 
-pub fn keystore_share_password_path<P: AsRef<Path>>(password_dir: P, keystore: &KeystoreShare) -> PathBuf {
-    password_dir
-        .as_ref()
-        .join(format!("{}_{}", keystore.master_public_key, keystore.share_id))
+pub fn keystore_share_password_path<P: AsRef<Path>>(
+    password_dir: P,
+    keystore: &KeystoreShare,
+) -> PathBuf {
+    password_dir.as_ref().join(format!(
+        "{}_{}",
+        keystore.master_public_key, keystore.share_id
+    ))
 }
 
 pub fn default_keystore_share_dir<P: AsRef<Path>>(
@@ -101,7 +105,6 @@ pub fn default_keystore_share_path<P: AsRef<Path>>(
     default_keystore_share_dir(keystore_share, validators_dir)
         .join(format!("{}", VOTING_KEYSTORE_SHARE_FILE))
 }
-
 
 /// Writes a JSON keystore to file.
 fn write_keystore_share_to_file(
