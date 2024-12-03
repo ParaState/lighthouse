@@ -33,7 +33,7 @@ use sync::poll_sync_committee_duties;
 use sync::SyncDutiesMap;
 use tokio::{sync::mpsc::Sender, time::sleep};
 use types::{ChainSpec, Epoch, EthSpec, Hash256, PublicKeyBytes, SelectionProof, Slot};
-
+use crate::signing_method::Error as SigningError;
 /// Only retain `HISTORICAL_DUTIES_EPOCHS` duties prior to the current epoch.
 const HISTORICAL_DUTIES_EPOCHS: u64 = 2;
 
@@ -98,6 +98,7 @@ pub enum Error {
     InvalidModulo(#[allow(dead_code)] ArithError),
     Arith(#[allow(dead_code)] ArithError),
     SyncDutiesNotFound(#[allow(dead_code)] u64),
+    Negligible
 }
 
 impl From<ArithError> for Error {
@@ -137,7 +138,10 @@ async fn make_selection_proof<T: SlotClock + 'static, E: EthSpec>(
     let selection_proof = validator_store
         .produce_selection_proof(duty.pubkey, duty.slot)
         .await
-        .map_err(Error::FailedToProduceSelectionProof)?;
+        .map_err(|e| match e {
+            ValidatorStoreError::UnableToSign(SigningError::NotLeader) => Error::Negligible,
+            _ => Error::FailedToProduceSelectionProof(e),
+        })?;
 
     selection_proof
         .is_aggregator(duty.committee_length as usize, spec)

@@ -9,6 +9,7 @@ message QueryNodeAddressRequest {
 
 message QueryNodeAddressResponse {
     bytes address = 1;
+    uint64 seq = 2;
 }
 
 service Bootnode {

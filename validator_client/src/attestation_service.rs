@@ -4,6 +4,7 @@ use crate::{
     http_metrics::metrics,
     validator_store::{Error as ValidatorStoreError, ValidatorStore},
     OfflineOnFailure,
+    signing_method::Error as SigningError
 };
 use environment::RuntimeContext;
 use futures::future::join_all;
@@ -410,6 +411,7 @@ impl<T: SlotClock + 'static, E: EthSpec> AttestationService<T, E> {
                 .await
             {
                 Ok(()) => Some((attestation, duty.validator_index)),
+                Err(ValidatorStoreError::UnableToSign(SigningError::NotLeader)) => None,
                 Err(ValidatorStoreError::UnknownPubkey(pubkey)) => {
                     // A pubkey can be missing when a validator was recently
                     // removed via the API.

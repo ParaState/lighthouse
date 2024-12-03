@@ -19,6 +19,7 @@ use types::{
     ChainSpec, EthSpec, Hash256, PublicKeyBytes, Slot, SyncCommitteeSubscription,
     SyncContributionData, SyncDuty, SyncSelectionProof, SyncSubnetId,
 };
+use crate::signing_method::Error as SigningError;
 
 pub const SUBSCRIPTION_LOOKAHEAD_EPOCHS: u64 = 4;
 
@@ -266,6 +267,7 @@ impl<T: SlotClock + 'static, E: EthSpec> SyncCommitteeService<T, E> {
                 .await
             {
                 Ok(signature) => Some(signature),
+                Err(ValidatorStoreError::UnableToSign(SigningError::NotLeader)) => None,
                 Err(ValidatorStoreError::UnknownPubkey(pubkey)) => {
                     // A pubkey can be missing when a validator was recently
                     // removed via the API.
@@ -420,6 +422,7 @@ impl<T: SlotClock + 'static, E: EthSpec> SyncCommitteeService<T, E> {
                     .await
                 {
                     Ok(signed_contribution) => Some(signed_contribution),
+                    Err(ValidatorStoreError::UnableToSign(SigningError::NotLeader)) => None,
                     Err(ValidatorStoreError::UnknownPubkey(pubkey)) => {
                         // A pubkey can be missing when a validator was recently
                         // removed via the API.

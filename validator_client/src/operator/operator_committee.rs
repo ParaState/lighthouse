@@ -11,7 +11,7 @@ use safestake_crypto::{ThresholdSignature, secp::SecretKey};
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use chrono::prelude::{DateTime, Utc};
 use crate::operator::report::{DvfPerformanceRequest, request_to_api, SignDigest};
-
+use task_executor::TaskExecutor;
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
     pub operator_id: u32,
@@ -47,7 +47,7 @@ impl TOperatorCommittee for DvfOperatorCommittee {
         self.operators.insert(operator_id, operator);
     }
 
-    async fn sign(&self, msg: Hash256) -> Result<(Signature, Vec<u64>), DvfError> {
+    async fn sign(&self, msg: Hash256, local_signature: Signature, executor: &TaskExecutor) -> Result<(Signature, Vec<u64>), DvfError> {
         let signing_futures = self.operators.iter().map(|(op_id, op)| async move {
             op.sign(msg).await.map(|sig| {
                 (*op_id, op.shared_public_key(), sig)
@@ -59,11 +59,20 @@ impl TOperatorCommittee for DvfOperatorCommittee {
             .flatten()
             .collect::<Vec<(u32, PublicKey, Signature)>>();
         let ids = results.iter().map(|x| x.0 as u64).collect::<Vec<u64>>();
-        let pks = results.iter().map(|x| &x.1).collect::<Vec<&PublicKey>>();
-        let sigs = results.iter().map(|x| &x.2).collect::<Vec<&Signature>>();
+        let pks = results.iter().map(|x| x.1.clone()).collect::<Vec<PublicKey>>();
+        let sigs = results.iter().map(|x| {
+            if x.2 == Signature::empty() {
+                local_signature.clone()
+            } else {
+                x.2.clone()
+            }   
+        }).collect::<Vec<Signature>>();
+        let ids_res = ids.clone();
         let threshold_sig = ThresholdSignature::new(self.threshold);
-        let sig = threshold_sig.threshold_aggregate(&sigs[..], &pks[..], &ids[..], msg)?;
-        Ok((sig, ids))
+        let sig = executor.spawn_blocking_handle(
+            move || threshold_sig.threshold_aggregate(&sigs, &pks, &ids, msg), "threshold_aggregate"
+        ).ok_or(DvfError::ShuttingDown)?.await.map_err(|e| DvfError::TokioJoin(e.to_string()))??;
+        Ok((sig, ids_res))
     }
 
     async fn check_liveness(&self, operator_id: u32) -> bool {

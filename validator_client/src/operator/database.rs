@@ -304,6 +304,17 @@ impl SafeStakeDatabase {
         })?.collect()
     }
 
+    pub fn query_validators_using_operator(
+        &self,
+        txn: &Transaction,
+        operator_id: u32
+    ) -> Result<Vec<PublicKey>, NotSafe> {
+        txn.prepare("select validator_public_key from validator_operators_mapping where operator_id =?1")?.query_and_then(params![operator_id], |row| {
+            let public_key: String = row.get(0).unwrap();
+            Ok(PublicKey::from_str(&public_key).unwrap())
+        })?.collect()
+    }
+
     pub fn query_validator_registration_timestamp(
         &self,
         txn: &Transaction,

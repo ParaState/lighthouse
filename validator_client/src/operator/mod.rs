@@ -82,8 +82,8 @@ pub struct LocalOperator {
 
 #[async_trait]
 impl TOperator for LocalOperator {
-    async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
-        Ok(self.operator_keypair.sk.sign(msg))
+    async fn sign(&self, _msg: Hash256) -> Result<Signature, DvfError> {
+        Ok(Signature::empty())
     }
 
     async fn is_active(&self) -> bool {

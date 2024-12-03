@@ -16,6 +16,7 @@ use crate::operator::database::SafeStakeDatabase;
 use slog::{info, error, Logger};
 use serde_utils::hex::encode as hex_encode;
 use crate::signing_method::SignableMessage;
+use task_executor::TaskExecutor;
 pub struct SafestakeService<E: EthSpec> {
     logger: Logger,
     secret: Secret,
@@ -33,7 +34,8 @@ impl<E: EthSpec> SafestakeService<E> {
         slashing_database: SlashingDatabase,
         safestake_database: SafeStakeDatabase,
         keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
-        mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>
+        mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>,
+        executor: &TaskExecutor
     ) -> Self {
         let safestake_service = Self {
             logger,
@@ -43,13 +45,14 @@ impl<E: EthSpec> SafestakeService<E> {
             safestake_database: safestake_database.clone(),
             keypairs
         };
-        tokio::spawn(async move {
+        let store_fut = async move {
             loop {
                 if let Some((msg, signature, validator_public_key)) = rx.recv().await {
                     let _ = store.put_bytes(&validator_public_key.as_hex_string(), &msg.0, &signature.serialize());
                 }
             }
-        });
+        };
+        executor.spawn(store_fut, "signature_store");
         safestake_service
     }
 

@@ -4,6 +4,7 @@ use dvf_utils::DvfError;
 use types::{AttestationData, Hash256, PublicKey, Signature};
 use safestake_crypto::secp::SecretKey;
 use slog::Logger;
+use task_executor::TaskExecutor;
 #[async_trait]
 pub trait TOperatorCommittee: Send {
     fn new(
@@ -15,7 +16,7 @@ pub trait TOperatorCommittee: Send {
         api: String
     ) -> Self;
     fn add_operator(&mut self, operator_id: u32, operator: Box<dyn TOperator>);
-    async fn sign(&self, msg: Hash256) -> Result<(Signature, Vec<u64>), DvfError>;
+    async fn sign(&self, msg: Hash256, local_signature: Signature, executor: &TaskExecutor) -> Result<(Signature, Vec<u64>), DvfError>;
     async fn check_liveness(&self, operator_id: u32) -> bool;
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);

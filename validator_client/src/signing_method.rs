@@ -135,6 +135,57 @@ impl SigningContext {
 }
 
 impl SigningMethod {
+    pub async fn responsible(&self, epoch: Epoch) -> bool {
+        let nonce = epoch.as_u64();
+        match self {
+            SigningMethod::DistributedKeystore { operator_committee, .. } => {
+                let leader = operator_committee.get_leader_id(nonce);
+                // if leader is active, check whether self is leader
+                if operator_committee.check_liveness(leader).await {
+                    operator_committee.is_leader(nonce)
+                } else {
+                    operator_committee.is_backup(nonce)
+                }
+            }
+            _ => true,
+        }
+    }
+
+    pub async fn distributed_attest(
+        &self,
+        domain_hash: Hash256,
+        attestation_data: &AttestationData,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore { operator_committee, .. } => {
+                operator_committee.attest(attestation_data, domain_hash).await;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn distributed_propose_block<T: EthSpec, Payload: AbstractExecPayload<T>>(
+        &self,
+        domain_hash: Hash256,
+        block: &BeaconBlock<T, Payload>,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore { operator_committee, .. } => {
+                let data = serde_json::to_vec(block).unwrap();
+                let block_type = Payload::block_type();
+                match block_type {
+                    BlockType::Blinded => {
+                        operator_committee.propose_blinded_block(&data, domain_hash).await;
+                    },
+                    BlockType::Full => {
+                        operator_committee.propose_full_block(&data, domain_hash).await;
+                    }
+                };
+            }
+            _ => {}
+        }
+    }
+
     /// Return whether this signing method requires local slashing protection.
     pub fn requires_local_slashing_protection(
         &self,
@@ -337,12 +388,20 @@ impl SigningMethod {
                     "Is aggregator" => is_aggregator
                 );
                 
-                let local_signature = keypair.sk.sign(signing_root);
-                store_sender.send((signing_root, local_signature, operator_committee.validator_public_key.clone())).await.unwrap();
+                let keypair = keypair.clone();
+                let local_signature = executor
+                    .spawn_blocking_handle(
+                        move || keypair.sk.sign(signing_root),
+                        "local_keystore_signer",
+                    )
+                    .ok_or(Error::ShuttingDown)?
+                    .await
+                    .map_err(|e| Error::TokioJoin(e.to_string()))?;
+                store_sender.send((signing_root, local_signature.clone(), operator_committee.validator_public_key.clone())).await.unwrap();
                 if !only_aggregator || (only_aggregator && is_aggregator) {
                     let task_timeout = Duration::from_secs(E::default_spec().seconds_per_slot * 2 / 3);
                     let timeout = sleep(task_timeout);
-                    let work = operator_committee.sign(signing_root);
+                    let work = operator_committee.sign(signing_root, local_signature, &executor);
                     let start_time: DateTime<Utc> = Utc::now();
                     tokio::select! {
                         result = work => {

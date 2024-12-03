@@ -71,7 +71,9 @@ use types::{EthSpec, Hash256, PublicKeyBytes};
 use validator_store::ValidatorStore;
 use crate::operator_service::SafestakeService;
 use crate::operator::database::SafeStakeDatabase;
+use crate::operator::report::status_report;
 use crate::contract_service::ContractService;
+use crate::discovery_service::DiscoveryService;
 use dvf_utils::DVF_DATABASE_PATH;
 use store::LevelDB;
 use crate::operator::proto::safestake_server::SafestakeServer;
@@ -558,6 +560,22 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         );
 
         // safestake operator
+        let sender = DiscoveryService::spawn(
+            log.clone(),
+            config.clone(),
+            safestake_database.clone(),
+            &context.executor,
+        ).await?;
+
+        DiscoveryService::spawn_operator_monitor(
+            log.clone(),
+            config.validator_dir.clone(),
+            safestake_database.clone(),
+            validator_store.clone(),
+            sender.clone(),
+            &context.executor,
+        );
+
         ContractService::check_operator(&config).await?;
 
         let keypairs = Arc::new(RwLock::new(HashMap::new()));
@@ -566,40 +584,44 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             config.clone(),
             validator_store.clone(),
             safestake_database.clone(),
-            context.executor.clone(),
-            keypairs.clone()
-        ).await?;
+            &context.executor,
+            keypairs.clone(),
+            sender
+        ).await;
 
         ContractService::spawn_validator_monitor(
             log.clone(),
             config.clone(),
             validator_store.clone(),
             safestake_database.clone(),
-            context.executor.clone(),
-        ).await?;
+            &context.executor,
+        );
 
         let store = Arc::new(LevelDB::<E>::open(&config.store_path.clone()).map_err(|e| {
             format!("{:?}", e)
         })?);
 
         let operator_service = SafestakeService::new(
-            log,
+            log.clone(),
             config.node_secret.clone(),
             store,
             slashing_protection.clone(),
             safestake_database,
             keypairs,
-            recv
+            recv,
+            &context.executor
         );
 
         let addr = format!("[::1]:{}", config.base_port).parse().unwrap();
-        tokio::spawn(async move {
+        context.executor.spawn(async move {
             Server::builder()
                 .add_service(SafestakeServer::new(operator_service))
                 .serve(addr)
                 .await.unwrap()
-        });
+        }, "safestake_server");
 
+        status_report(config.clone(), log, &context.executor);
+        
         Ok(Self {
             context,
             duties_service,

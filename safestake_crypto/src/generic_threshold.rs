@@ -160,8 +160,8 @@ where
 
     pub fn threshold_aggregate(
         &self,
-        sigs: &[&Signature],
-        pks: &[&PublicKey],
+        sigs: &[Signature],
+        pks: &[PublicKey],
         ids: &[u64],
         msg: Hash256,
     ) -> Result<Signature, DvfError> {
@@ -191,10 +191,10 @@ where
             if valid_set.contains(&ids[i]) {
                 continue;
             }
-            let status = sigs[i].verify(pks[i], msg);
+            let status = sigs[i].verify(&pks[i], msg);
             if status {
-                pks_valid.push(pks[i]);
-                sigs_valid.push(sigs[i]);
+                pks_valid.push(&pks[i]);
+                sigs_valid.push(&sigs[i]);
                 ids_valid.push(ids[i]);
                 valid_set.insert(ids[i]);
                 if pks_valid.len() >= self.threshold() {

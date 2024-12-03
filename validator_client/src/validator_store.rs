@@ -613,6 +613,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
 
         let signing_method = self.doppelganger_checked_signing_method(validator_pubkey)?;
 
+        if signing_method.responsible(signing_epoch).await {
         // Check for slashing conditions.
         let slashing_status = if signing_method
             .requires_local_slashing_protection(self.enable_web3signer_slashing_protection)
@@ -629,7 +630,8 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         match slashing_status {
             // We can safely sign this block without slashing.
             Ok(Safe::Valid) => {
-                metrics::inc_counter_vec(&metrics::SIGNED_BLOCKS_TOTAL, &[metrics::SUCCESS]);
+                // distributed sign block
+                signing_method.distributed_propose_block(domain_hash,&block).await;
 
                 let signature = signing_method
                     .get_signature::<E, Payload>(
@@ -639,6 +641,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         &self.task_executor,
                     )
                     .await?;
+                metrics::inc_counter_vec(&metrics::SIGNED_BLOCKS_TOTAL, &[metrics::SUCCESS]);
                 Ok(SignedBeaconBlock::from_block(block, signature))
             }
             Ok(Safe::SameData) => {
@@ -669,6 +672,9 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 Err(Error::Slashable(e))
             }
         }
+        } else {
+            return Err(Error::UnableToSign(SigningError::NotLeader));
+        }
     }
 
     pub async fn sign_attestation(
@@ -693,6 +699,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         let signing_epoch = attestation.data().target.epoch;
         let signing_context = self.signing_context(Domain::BeaconAttester, signing_epoch);
         let domain_hash = signing_context.domain_hash(&self.spec);
+        if signing_method.responsible(signing_epoch).await {
         let slashing_status = if signing_method
             .requires_local_slashing_protection(self.enable_web3signer_slashing_protection)
         {
@@ -761,6 +768,9 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 );
                 Err(Error::Slashable(e))
             }
+        }
+        }  else {
+            return Err(Error::UnableToSign(SigningError::NotLeader));
         }
     }
 

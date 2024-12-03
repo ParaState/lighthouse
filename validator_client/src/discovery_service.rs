@@ -5,38 +5,38 @@ use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use lighthouse_network::discv5::{
     enr::{CombinedKey, Enr, EnrPublicKey, NodeId}, ConfigBuilder, Discv5, Event, ListenConfig
 };
-use slog::{info, error, Logger};
+use slog::{info, error, warn, Logger};
 use dvf_utils::{DEFAULT_BASE_PORT, BOOT_ENRS_CONFIG_FILE};
+use task_executor::TaskExecutor;
 use std::fs::File;
 use std::time::Duration;
 use std::sync::Arc;
+use std::path::PathBuf;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
+use bls::PublicKey;
 use crate::operator::proto::bootnode_client::BootnodeClient;
 use crate::operator::proto::QueryNodeAddressRequest;
 use dvf_utils::VERSION;
+use types::EthSpec;
+use slot_clock::SlotClock;
+use crate::validator_store::ValidatorStore;
+use account_utils::{default_operator_committee_definition_path, operator_committee_definitions::OperatorCommitteeDefinition};
 
 pub const DISCOVERY_PORT_OFFSET: u16 = 4;
-pub const DISCOVER_HEARTBEAT_INTERVAL: u64 = 60 * 5;
 
 #[derive(Clone)]
-pub struct DiscoveryService {
-    sender: mpsc::Sender<(NodeId, oneshot::Sender<()>)>,
-    heartbeats: Arc<RwLock<HashMap<SecpPublicKey, Interval>>>,
-    db: SafeStakeDatabase,
-    boot_nodes: Vec<SocketAddr>,
-    logger: Logger
-}
+pub struct DiscoveryService { }
 
 impl DiscoveryService {
-    pub async fn new_and_spawn(
+    pub async fn spawn(
         logger: Logger,
         config: Config,
         db: SafeStakeDatabase,
-    ) -> Result<Self, String> {
+        executor: &TaskExecutor
+    ) -> Result<mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>, String> {
         let seq = match db.with_transaction(|tx| {
             db.query_operator_seq(tx, &config.node_secret.name)
         }) {
@@ -114,46 +114,96 @@ impl DiscoveryService {
             boot_nodes.push(socketaddr);
         });
 
-        let (tx, mut rx) = mpsc::channel::<(NodeId, oneshot::Sender<()>)>(1000);
+        let (query_tx, mut query_rx) = mpsc::channel::<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>(1000);
 
-        let discovery = Self {
-            sender: tx,
-            heartbeats: <_>::default(),
-            db: db.clone(),
-            boot_nodes,
-            logger: logger.clone()
-        };  
-
-        tokio::spawn(async move {
+        let self_public_key = config.node_secret.name.clone();
+        let discv5_fut = async move {
             let _ = discv5.start().await;
             let mut event_stream = discv5.event_stream().await.unwrap();
-
+            let mut heartbeats: HashMap<SecpPublicKey, Interval> = HashMap::new();
+            let random_node_id = NodeId::random();
+            discv5.find_node(random_node_id).await.unwrap().into_iter().for_each(|enr| handle_enr(&self_public_key, &db, enr));
             loop {
                 tokio::select! {
-                    Some((node_id, notification)) = rx.recv() => {
-                        match discv5.find_node(node_id).await {
-                            Ok(v) => {
-                                for enr in v {
-                                    handle_enr(&db, enr).await;
-                                }
-                            },
-                            Err(e) => {
-                                error!(
-                                    logger,
-                                    "discovery service";
-                                    "err" => %e
-                                );
-                            }
+                    Some((node_public_key, notification)) = query_rx.recv() => {
+                        if !heartbeats.contains_key(&node_public_key) {
+                            let mut ht = tokio::time::interval(Duration::from_secs(60 * 10));
+                            ht.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                            heartbeats.insert(node_public_key.clone(), ht);
                         }
-                        let _ = notification.send(());
+                        let heartbeat = heartbeats.get_mut(&node_public_key).unwrap();
+                        let ready = std::future::ready(());
+                        tokio::select! {
+                            biased; // Poll from top to bottom
+                            _ = heartbeat.tick() => {
+                                let node_id = NodeId::parse(&keccak_hash::keccak(&node_public_key).0).unwrap();
+                                // discover 
+                                match discv5.find_node(node_id).await {
+                                    Ok(v) => v.into_iter().for_each(|enr| handle_enr(&self_public_key, &db, enr)),
+                                    Err(e) => {
+                                        error!(
+                                            logger,
+                                            "discovery service";
+                                            "err" => %e
+                                        );
+                                    }
+                                }
+                                // query from boot
+                                let boot_idx = rand::random::<usize>() % boot_nodes.len();
+                                let addr = boot_nodes[boot_idx];
+                                let mut client = match BootnodeClient::connect(format!("http://{}", addr)).await {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        error!(
+                                            logger,
+                                            "query_boot";
+                                            "error" => %e
+                                        );
+                                        notification.send(None).unwrap();
+                                        continue;
+                                    }
+                                };
+                                let request = tonic::Request::new(QueryNodeAddressRequest {
+                                    version: VERSION,
+                                    operator_public_key: node_public_key.0.to_vec(),
+                                });
+                                match client.query_node_address(request).await {
+                                    Ok(response) => {
+                                        let res = response.into_inner();
+                                        let addr = bincode::deserialize::<SocketAddr>(&res.address).unwrap();
+                                        let _ = db.with_transaction(|tx| {
+                                            db.upsert_operator_socket_address(tx, &node_public_key, &addr, res.seq)
+                                        });
+                                        notification.send(Some(addr)).unwrap()
+                                    },
+                                    Err(e) => {
+                                        error!(
+                                            logger,
+                                            "query boot node";
+                                            "error" => %e
+                                        );
+                                        notification.send(None).unwrap()
+                                    }
+                                }
+                            }
+                            _ = ready => {
+                                let addr = match db.with_transaction(|txn| {
+                                    db.query_operator_socket_address(txn, &node_public_key)
+                                }) {
+                                    Ok(s) => Some(s),
+                                    Err(_) => None 
+                                };
+                                notification.send(addr).unwrap()
+                            }
+                        };
                     }
                     Some(event) = event_stream.recv() => {
                         match event {
                             Event::Discovered(enr) => {
-                                handle_enr(&db, enr).await;
+                                handle_enr(&self_public_key, &db, enr);
                             }
                             Event::SessionEstablished(enr, _) => {
-                                handle_enr(&db, enr).await;
+                                handle_enr(&self_public_key, &db, enr);
                             },
                             Event::SocketUpdated(addr) => {
                                 info!(
@@ -170,96 +220,90 @@ impl DiscoveryService {
                 }
             }
 
-        });
-        // immediately initiate a discover request to annouce ourself
-        let random_node_id = NodeId::random();
-        discovery.discover(random_node_id).await;
+        };
+        executor.spawn(discv5_fut, "discv5");
 
-        Ok(discovery)
+        Ok(query_tx)
     }
 
-    async fn discover(&self, node_id: NodeId) {
-        let (sender, receiver) = oneshot::channel();
-        let _ = self.sender.send((node_id, sender)).await;
-        let _ = receiver.await;
-    }
+    pub fn spawn_operator_monitor<T: SlotClock + 'static, E: EthSpec>(
+        logger: Logger,
+        validator_dir: PathBuf,
+        db: SafeStakeDatabase,
+        validator_store: Arc<ValidatorStore<T, E>>,
+        sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+        executor: &TaskExecutor,
+    ) {
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
+        let executor_ = executor.clone();
+        executor.spawn(async move {
+            loop {
+                query_interval.tick().await;
 
-    pub async fn query_addrs(&self, pks: &Vec<SecpPublicKey>) -> Vec<Option<SocketAddr>> {
-        let mut socket_address: Vec<Option<SocketAddr>> = Default::default();
-        for pk in pks {
-            socket_address.push(self.query_addr(&pk).await);
-        }
-        socket_address
-    }
+                let validator_public_keys = db.with_transaction(|tx| {
+                    db.query_all_validators(tx)
+                }).unwrap();
 
-    pub async fn query_addr(&self, pk: &SecpPublicKey) -> Option<SocketAddr> {
-        let mut heartbeats = self.heartbeats.write().await;
-        if !heartbeats.contains_key(&pk) {
-            let mut ht = tokio::time::interval(Duration::from_secs(DISCOVER_HEARTBEAT_INTERVAL));
-            ht.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            heartbeats.insert(pk.clone(), ht);
-        }
+                for validator_public_key in &validator_public_keys {
+                    let committee_def_path = default_operator_committee_definition_path(validator_public_key, validator_dir.clone());
+                    let mut committee_def = OperatorCommitteeDefinition::from_file(&committee_def_path).unwrap();
+                    let mut restart = false;
+                    for i in 0..committee_def.total as usize {
+                        let (tx, rx) = oneshot::channel();
+                        sender.send((committee_def.node_public_keys[i].clone(), tx)).await.unwrap();
+                        if let Some(addr) = rx.await.unwrap() {
+                            if let Some(current) = committee_def.base_socket_addresses[i].as_mut() {
+                                if *current != addr {
+                                   info!(
+                                        logger,
+                                        "opertor_ip_changed";
+                                        "local" => %current,
+                                        "queried" => addr
+                                   );
+                                   *current = addr;
+                                   restart = true;
+                                }
+                            } else {
+                                committee_def.base_socket_addresses[i] = Some(addr);
+                                restart = true;
+                            }
+                        }
+                    }
+                    if restart {
+                        let _ = committee_def.save(committee_def_path.parent().unwrap());
+                        // restart validator
+                        if let Some(handle) = executor_.handle() {
+                            if let Err(e) = handle.block_on(
+                                restart_validator(&validator_store, validator_public_key)
+                            ) {
+                                warn!(logger, "failed to restart validator"; "error reason" => e);
+                                continue;
+                            }
+                        } else {
+                            warn!(
+                                logger,
+                                "no handler found for executor";
+                            )
+                        }
+                    }
 
-        let heartbeat = heartbeats.get_mut(pk).unwrap();
-        let ready = std::future::ready(());
-        tokio::select! {
-            biased; // Poll from top to bottom
-            _ = heartbeat.tick() => {
-                // Updating IP takes time, so we can release the hashmap lock here.
-                drop(heartbeats);
-                // only update when heartbeat is ready
-                self.update_addr(pk).await
-            }
-            _ = ready => {
-                match self.db.with_transaction(|txn| {
-                    self.db.query_operator_socket_address(txn, pk)
-                }) {
-                    Ok(s) => Some(s),
-                    Err(_) => None 
                 }
             }
-        }
-    }
-
-    async fn update_addr(&self, pk: &SecpPublicKey) -> Option<SocketAddr> {
-        let node_id = NodeId::parse(&keccak_hash::keccak(pk).0).unwrap();
-        self.discover(node_id).await;
-        // Randomly pick a boot node
-        let boot_idx = rand::random::<usize>() % self.boot_nodes.len();
-        self.query_addr_from_boot(boot_idx, pk).await.ok()
-    }
-
-    async fn query_addr_from_boot(&self, boot_idx: usize, pk: &SecpPublicKey) -> Result<SocketAddr, String> {
-        let addr = self.boot_nodes[boot_idx];
-        let mut client = BootnodeClient::connect(format!("http://{}", addr)).await.map_err(|e| e.to_string())?;
-        let request = tonic::Request::new(QueryNodeAddressRequest {
-            version: VERSION,
-            operator_public_key: pk.0.to_vec(),
-        });
-        match client.query_node_address(request).await {
-            Ok(response) => {
-                let data: Vec<u8> = response.into_inner().address;
-                let addr = bincode::deserialize::<SocketAddr>(&data).unwrap();
-                Ok(addr)
-            },
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "query boot node";
-                    "error" => %e
-                );
-                Err(e.to_string())
-            }
-        }
+        }, "operator_address_monitor");
     }
 }
 
-pub async fn handle_enr(
+pub fn handle_enr(
+    self_public_key: &SecpPublicKey,
     db: &SafeStakeDatabase,
     enr: Enr<CombinedKey> 
 ) {
     let node_public_key: [u8; 33] = enr.public_key().encode().try_into().unwrap();
     let public_key = SecpPublicKey(node_public_key);
+    if public_key == *self_public_key {
+        // ignore self operator, the address of self operator in database is always 127.0.0.1:26000
+        return ;
+    }
     let seq = match db.with_transaction(|txn| {
         db.query_operator_seq(txn, &public_key)
     }) {
@@ -282,4 +326,21 @@ pub async fn handle_enr(
         });
     }
     
+}
+
+async fn restart_validator<T: SlotClock + 'static, E: EthSpec>(
+    validator_store: &Arc<ValidatorStore<T, E>>,
+    validator_public_key: &PublicKey,
+) -> Result<(), String> {
+    match validator_store.is_enabled(validator_public_key).await {
+        Some(enabled) => {
+            if enabled {
+                let _ = validator_store.disable_keystore(validator_public_key).await;
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let _ = validator_store.enable_keystore(validator_public_key).await;
+            }
+            Ok(())
+        }
+        None => { Ok(())}
+    }
 }

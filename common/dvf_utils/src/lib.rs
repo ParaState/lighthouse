@@ -35,6 +35,8 @@ pub enum DvfError {
     /// Zero knowledge proof verification
     ZKVerificationFailed,
     InsufficientValidPks,
+    ShuttingDown,
+    TokioJoin(String),
 }
 
 /// Up to 1 million
@@ -44,7 +46,7 @@ pub const ROOT_VERSION: u64 = 1;
 /// Up to 1 million
 pub const MAJOR_VERSION: u64 = 3;
 /// Up to 1 million
-pub const MINOR_VERSION: u64 = 4;
+pub const MINOR_VERSION: u64 = 5;
 
 pub static VERSION: u64 = ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + MINOR_VERSION;
 

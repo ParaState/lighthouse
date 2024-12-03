@@ -34,6 +34,9 @@ use slot_clock::SlotClock;
 use types::{Address as H160, graffiti::GraffitiString};
 use task_executor::TaskExecutor;
 use std::str::FromStr;
+use std::net::SocketAddr;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 sol!(
     #[allow(missing_docs)]
@@ -155,33 +158,31 @@ impl ContractService {
         config: Config,
         validator_store: Arc<ValidatorStore<T, E>>, 
         db: SafeStakeDatabase,
-        executor: TaskExecutor,
-        keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>
-    ) -> Result<(), String> {
-        let provider: P = ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().map_err(|e| {
-            e.to_string()
-        })?);
+        executor: &TaskExecutor,
+        keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+        sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>
+    ) {
+        let provider: P = ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
         let mut record = match BlockRecord::from_file(&config.contract_record_path) {
             Ok(r) => r,
-            Err(e) => {
-                let current_block = provider.get_block_number().await.map_err(|e| e.to_string())?;
-                warn!(
-                    logger, 
-                    "contract service"; 
-                    "file error" => e, 
-                    "current block" => current_block
-                );
+            Err(_) => {
+                let current_block = provider.get_block_number().await.unwrap();
+                
                 BlockRecord { block_num: current_block }
             }
         };
-        let registry_address = config.registry_contract.parse::<Address>().map_err(|e| e.to_string())?;
-        let network_address = config.network_contract.parse::<Address>().map_err(|e| e.to_string())?;
-        let config_address = config.config_contract.parse::<Address>().map_err(|e| e.to_string())?;
-        let cluster_address = config.cluster_contract.parse::<Address>().map_err(|e| e.to_string())?;
-        
-        tokio::spawn(async move {
-            let mut query_interval =
-                tokio::time::interval(Duration::from_secs(60));
+        info!(
+            logger, 
+            "pull event logs"; 
+            "record block" => record.block_num
+        );
+        let registry_address = config.registry_contract.parse::<Address>().unwrap();
+        let network_address = config.network_contract.parse::<Address>().unwrap();
+        let config_address = config.config_contract.parse::<Address>().unwrap();
+        let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60));
+        let executor_ = executor.clone();
+        executor.spawn(async move {
             loop {
                 query_interval.tick().await;
                 match provider.get_block_number().await {
@@ -198,7 +199,7 @@ impl ContractService {
                                     continue;
                                 }
                                 for log in logs {
-                                    if let Some(handle) = executor.handle() {
+                                    if let Some(handle) = executor_.handle() {
                                         if let Err(e) = handle.block_on(
                                             handle_events(
                                                 &log,
@@ -206,7 +207,8 @@ impl ContractService {
                                                 &config,
                                                 validator_store.clone(),
                                                 &db,
-                                                keypairs.clone()
+                                                keypairs.clone(),
+                                                &sender
                                             )
                                         ) {
                                             warn!(logger, "process events"; "error reason" => e);
@@ -232,27 +234,24 @@ impl ContractService {
                     }
                 }
             }
-        });
-        Ok(())
+        }, "pull_events");
     }
 
-    pub async fn spawn_validator_monitor<T: SlotClock + 'static, E: EthSpec>(
+    pub fn spawn_validator_monitor<T: SlotClock + 'static, E: EthSpec>(
         logger: Logger,
         config: Config,
-        validator_store: Arc<ValidatorStore<T, E>>, 
+        validator_store: Arc<ValidatorStore<T, E>>,
         db: SafeStakeDatabase,
-        executor: TaskExecutor,
-    ) -> Result<(), String> {
-        let provider: P = ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().map_err(|e| {
-            e.to_string()
-        })?);
-        let current_block = provider.get_block_number().await.map_err(|e| e.to_string())?;
-        let network_contract = SafeStakeNetworkContract::new(config.network_contract.parse::<Address>().map_err(|e| e.to_string())?, provider.clone());
-        
-        tokio::spawn(async move {
-            let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 3));
+        executor: &TaskExecutor,
+    ) {
+        let executor_ = executor.clone();
+        let provider: P = ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
+        let network_contract = SafeStakeNetworkContract::new(config.network_contract.parse::<Address>().unwrap(), provider.clone());
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 3));
+        executor.spawn(async move {    
             loop {
                 query_interval.tick().await;
+                let current_block = provider.get_block_number().await.unwrap();
                 match db.with_transaction(|tx| {
                     db.query_all_validators(tx)
                 }) {
@@ -269,10 +268,10 @@ impl ContractService {
                                         "paid block" => paid_block,
                                     );
 
-                                    if let Some(handle) = executor.handle() {
+                                    if let Some(handle) = executor_.handle() {
                                         if let Err(e) = handle.block_on(
                                             handle_validator_balance(
-                                                validator_store.clone(),
+                                                &validator_store,
                                                 &validator_public_key,
                                                 current_block,
                                                 paid_block
@@ -287,8 +286,6 @@ impl ContractService {
                                             "no handler found for executor";
                                         )
                                     }
-
-                                    
                                 },
                                 Err(e) => {
                                     error!(
@@ -309,13 +306,12 @@ impl ContractService {
                     }
                 }
             }
-        });
-        Ok(())
+        }, "validator_monitor");
     }
 }
 
 async fn handle_validator_balance<T: SlotClock + 'static, E: EthSpec>(
-    validator_store: Arc<ValidatorStore<T, E>>,
+    validator_store: &Arc<ValidatorStore<T, E>>,
     validator_public_key: &PublicKey,
     current_block: u64,
     paid_block: u64
@@ -349,11 +345,12 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     config: &Config,
     validator_store: Arc<ValidatorStore<T, E>>, 
     db: &SafeStakeDatabase, 
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>
+    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+    sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
-            handle_validator_registration(log, logger, config, validator_store, db, keypairs).await?;
+            handle_validator_registration(log, logger, config, validator_store, db, keypairs, sender).await?;
         },
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
             handle_validator_removal(log, logger, config, validator_store, db, keypairs).await?;
@@ -374,7 +371,8 @@ async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
     config: &Config,
     validator_store: Arc<ValidatorStore<T, E>>, 
     db: &SafeStakeDatabase,
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>
+    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+    sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRegistration {
         _0, 
@@ -456,13 +454,10 @@ async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
 
         let mut socket_addresses = vec![];
         for public_key in &operator_public_keys {
-            let socket_address = match db.with_transaction(|tx| {
-                db.query_operator_socket_address(tx, public_key)
-            }) {
-                Ok(s) => Some(s),
-                Err(_) => None
-            };
-            socket_addresses.push(socket_address);
+            let (tx, rx) = oneshot::channel();
+            sender.send((public_key.clone(), tx)).await.unwrap();
+            let addr = rx.await.unwrap();
+            socket_addresses.push(addr);
         }
 
         let def = OperatorCommitteeDefinition {
