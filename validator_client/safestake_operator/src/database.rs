@@ -155,9 +155,9 @@ impl SafeStakeDatabase {
 
     pub fn insert_operator(&self, txn: &Transaction, op: &Operator) -> Result<(), NotSafe> {
         let mut stmt = txn.prepare("SELECT id FROM operators where id = ?1")?;
-        let rows = stmt.query(params![op.id]).optional()?;
-        if rows.is_some() {
-            return Ok(());
+        match stmt.query_row(params![op.id], |_| { Ok(()) }) {
+            Ok(_) => { return Ok(())}
+            Err(_) => {}
         }
         let mut stmt = txn.prepare(
             "INSERT INTO operators(id, name, address, public_key) values (?1, ?2, ?3, ?4)",

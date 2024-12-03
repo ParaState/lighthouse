@@ -445,6 +445,9 @@ impl Config {
         config.safestake_config.base_port = parse_required(cli_args, "base-port")?;
         info!(log, "read base port"; "base-port" => config.safestake_config.base_port);
 
+        config.safestake_config.safestake_api = parse_required(cli_args, "api")?;
+        info!(log, "read safestake api"; "safestake api" => %config.safestake_config.safestake_api);
+
         // node secret
         let node_secret_path = default_root_dir
             .join(get_network_dir(cli_args))

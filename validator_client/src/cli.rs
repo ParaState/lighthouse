@@ -475,4 +475,101 @@ pub fn cli_app() -> Command {
                 .action(ArgAction::Set)
                 .display_order(0)
         )
+        .arg(
+            Arg::new("ip")
+                .long("ip")
+                .value_name("NODE_IP")
+                .help(
+                    "This node's public ip"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("id")
+            .long("id")
+            .value_name("NODE_ID")
+            .help(
+                "This node's id in smart contract"
+            )
+            .action(ArgAction::Set)
+            .display_order(0)
+            .required(true)
+        )
+        .arg(
+            Arg::new("api")
+                .long("api")
+                .value_name("API")
+                .help(
+                    "The api where the operator to send performance request"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("base-port")
+                .long("base-port")
+                .value_name("BASE_PORT")
+                .help(
+                    "This node's BASE_PORT"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("rpc-url")
+            .long("rpc-url")
+            .value_name("RPC_URL")
+            .help("rpc url")
+            .action(ArgAction::Set)
+            .display_order(0)
+            .required(true)
+        )
+        .arg(
+            Arg::new("registry-contract")
+                .long("registry-contract")
+                .value_name("REGISTRY_CONTRACT")
+                .help(
+                    "This is the address of registry contract"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("network-contract")
+                .long("network-contract")
+                .value_name("NETWORK_CONTRACT")
+                .help(
+                    "This is the address of network contract"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("config-contract")
+                .long("config-contract")
+                .value_name("CONFIG_CONTRACT")
+                .help(
+                    "This is the address of config contract"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
+        .arg(
+            Arg::new("cluster-contract")
+                .long("cluster-contract")
+                .value_name("CLUSTER_CONTRACT")
+                .help(
+                    "This is the address of cluster contract"
+                )
+                .action(ArgAction::Set)
+                .display_order(0)
+                .required(true)
+        )
 }

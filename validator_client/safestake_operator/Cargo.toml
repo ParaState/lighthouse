@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
 
+[[test]]
+name = "safestake_operator_tests"
+path = "tests/main.rs"
+
 [dependencies]
 account_utils = { workspace = true }
 bincode = { workspace = true }
@@ -39,3 +43,6 @@ url = "2"
 
 [build-dependencies]
 tonic-build = { version = "0.11.0", features = ["prost"] }
+
+[dev-dependencies]
+rand = "0.8"
