@@ -10,7 +10,6 @@ use std::path::Path;
 ///
 /// Use `KeystoreShareBuilder` to create a new keystore share.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct KeystoreShare {
     pub keystore: Keystore,
     pub master_public_key: PublicKey,
