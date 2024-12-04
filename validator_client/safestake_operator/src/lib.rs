@@ -15,10 +15,12 @@ use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, SecretKey as SecpSecretKey, Signature as SecpSignature,
 };
 use slog::{error, info, Logger};
+use tonic::transport::Channel;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use types::{AttestationData, PublicKey};
 use types::{Hash256, Keypair, Signature};
+use tokio::sync::OnceCell;
 
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
@@ -28,6 +30,9 @@ lazy_static! {
         threshold_map
     };
 }
+
+pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();
+pub static SAFESTAKE_API: OnceCell<String> = OnceCell::const_new();
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
@@ -116,22 +121,13 @@ pub struct RemoteOperator {
     pub operator_node_pk: SecpPublicKey,
     pub shared_public_key: PublicKey,
     pub logger: Logger,
+    pub client: Option<SafestakeClient<Channel>>
 }
 
 #[async_trait]
 impl TOperator for RemoteOperator {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
-        let mut client = match SafestakeClient::connect(self.endpoint()).await {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "remote attest";
-                    "error" => %e
-                );
-                return Err(DvfError::SignatureNotFound(e.to_string()));
-            }
-        };
+        let mut client = self.get_client().await?;
         let request = tonic::Request::new(GetSignatureRequest {
             version: VERSION,
             msg: msg.0.to_vec(),
@@ -144,16 +140,9 @@ impl TOperator for RemoteOperator {
     }
 
     async fn is_active(&self) -> bool {
-        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+        let mut client = match self.get_client().await {
             Ok(c) => c,
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "remote active";
-                    "error" => %e
-                );
-                return false;
-            }
+            Err(_) => { return false; }
         };
         let random_hash = Hash256::random();
         let request = tonic::Request::new(CheckLivenessRequest {
@@ -193,16 +182,9 @@ impl TOperator for RemoteOperator {
     }
 
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
-        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+        let mut client = match self.get_client().await {
             Ok(c) => c,
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "remote attest";
-                    "error" => %e
-                );
-                return;
-            }
+            Err(_) => { return ; }
         };
         let data = serde_json::to_string(attest_data).unwrap();
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
@@ -236,16 +218,9 @@ impl TOperator for RemoteOperator {
     }
 
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256) {
-        let mut client = match SafestakeClient::connect(self.endpoint()).await {
+        let mut client = match self.get_client().await {
             Ok(c) => c,
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "remote attest";
-                    "error" => %e
-                );
-                return;
-            }
+            Err(_) => { return ; }
         };
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
@@ -329,5 +304,24 @@ impl TOperator for RemoteOperator {
 impl RemoteOperator {
     fn endpoint(&self) -> String {
         format!("http://{}", self.base_address)
+    }
+
+    async fn get_client(&self) -> Result<SafestakeClient<Channel>, DvfError> {
+        match &self.client {
+            Some(c) => Ok(c.clone()),
+            None => {
+                match SafestakeClient::connect(self.endpoint()).await {
+                    Ok(c) => Ok(c),
+                    Err(e) => {
+                        error!(
+                            self.logger,
+                            "remote operator";
+                            "error" => %e
+                        );
+                        Err(DvfError::SignatureNotFound(e.to_string()))
+                    }
+                }
+            }
+        }
     }
 }

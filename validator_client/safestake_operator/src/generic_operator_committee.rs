@@ -13,7 +13,6 @@ pub trait TOperatorCommittee: Send {
         validator_public_key: PublicKey,
         t: usize,
         log: Logger,
-        api: String,
     ) -> Self;
     fn add_operator(&mut self, operator_id: u32, operator: Box<dyn TOperator>);
     async fn sign(

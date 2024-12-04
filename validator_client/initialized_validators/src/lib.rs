@@ -395,8 +395,6 @@ impl InitializedValidator {
                 voting_keystore_share_password,
                 operator_committee_definition_path,
                 operator_id,
-                node_secret,
-                safestake_api,
                 ..
             } => {
                 use std::collections::hash_map::Entry::*;
@@ -465,11 +463,9 @@ impl InitializedValidator {
                 let validator_public_key = committee_def.validator_public_key.clone();
                 let local_operator_id = operator_id;
                 let mut committee = DvfOperatorCommittee::from_definition(
-                    node_secret.secret.clone(),
                     local_operator_id,
                     committee_def,
                     log,
-                    safestake_api.clone(),
                 );
                 committee.add_operator(
                     local_operator_id,

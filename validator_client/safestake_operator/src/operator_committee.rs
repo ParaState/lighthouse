@@ -2,6 +2,7 @@ use crate::generic_operator_committee::TOperatorCommittee;
 use crate::report::{request_to_api, DvfPerformanceRequest, SignDigest};
 use crate::RemoteOperator;
 use crate::TOperator;
+use crate::{NODE_SECRET, SAFESTAKE_API};
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use async_trait::async_trait;
 use chrono::prelude::{DateTime, Utc};
@@ -12,6 +13,7 @@ use slog::Logger;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use types::{AttestationData, Hash256, PublicKey, Signature};
+
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
     pub operator_id: u32,
@@ -19,7 +21,6 @@ pub struct DvfOperatorCommittee {
     threshold: usize,
     operators: HashMap<u32, Box<dyn TOperator>>,
     pub log: Logger,
-    pub safestake_api: String,
 }
 
 #[async_trait]
@@ -30,7 +31,6 @@ impl TOperatorCommittee for DvfOperatorCommittee {
         validator_public_key: PublicKey,
         t: usize,
         log: Logger,
-        safestake_api: String,
     ) -> Self {
         Self {
             node_secret_key,
@@ -39,7 +39,6 @@ impl TOperatorCommittee for DvfOperatorCommittee {
             threshold: t,
             operators: <_>::default(),
             log,
-            safestake_api,
         }
     }
 
@@ -140,19 +139,17 @@ impl DvfOperatorCommittee {
     }
 
     pub fn from_definition(
-        node_secret_key: SecretKey,
         operator_id: u32,
         def: OperatorCommitteeDefinition,
         log: Logger,
-        api: String,
     ) -> Self {
+        let node_secret_key = NODE_SECRET.get().unwrap();
         let mut committee = Self::new(
             node_secret_key.clone(),
             operator_id,
             def.validator_public_key.clone(),
             def.threshold as usize,
             log.clone(),
-            api,
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
@@ -165,6 +162,7 @@ impl DvfOperatorCommittee {
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
+                client: None
             };
             committee.add_operator(def.operator_ids[i], Box::new(operator));
         }
@@ -195,7 +193,7 @@ impl DvfOperatorCommittee {
                 sign_hex: None,
             };
             request_body.sign_hex = Some(request_body.sign_digest(&self.node_secret_key)?);
-            let url_str = format!("{}{}", self.safestake_api, "collect_performance");
+            let url_str = format!("{}{}", SAFESTAKE_API.get().unwrap(), "collect_performance");
             tokio::spawn(async move {
                 _ = request_to_api(request_body, &url_str).await;
             });

@@ -10,7 +10,6 @@ use directory::ensure_dir_exists;
 use eth2_keystore::Keystore;
 use eth2_keystore_share::KeystoreShare;
 use regex::Regex;
-use safestake_crypto::secret::Secret;
 use serde::{Deserialize, Serialize};
 use slog::{error, Logger};
 use std::collections::HashSet;
@@ -112,9 +111,7 @@ pub enum SigningDefinition {
         voting_keystore_share_password: Option<ZeroizeString>,
         #[serde(skip_serializing_if = "Option::is_none")]
         operator_committee_definition_path: Option<PathBuf>,
-        operator_id: u32,
-        node_secret: Secret,
-        safestake_api: String,
+        operator_id: u32
     },
 }
 
@@ -268,8 +265,6 @@ impl ValidatorDefinition {
         prefer_builder_proposals: Option<bool>,
         operator_committee_definition_path: P,
         operator_id: u32,
-        node_secret: Secret,
-        safestake_api: String,
     ) -> Result<Self, Error> {
         let voting_keystore_share_path = voting_keystore_share_path.as_ref().into();
         let keystore_share = KeystoreShare::from_json_file(&voting_keystore_share_path)
@@ -299,9 +294,7 @@ impl ValidatorDefinition {
                 operator_committee_definition_path: Some(
                     operator_committee_definition_path.as_ref().into(),
                 ),
-                operator_id,
-                node_secret,
-                safestake_api,
+                operator_id
             },
         })
     }

@@ -15,11 +15,6 @@ use beacon_node_fallback::{
     start_fallback_updater_service, BeaconNodeFallback, CandidateBeaconNode,
 };
 
-use safestake_service::contract_service::ContractService;
-use safestake_service::discovery_service::DiscoveryService;
-use safestake_operator::database::SafeStakeDatabase;
-use safestake_operator::report::status_report;
-use safestake_service::operator_service::SafestakeService;
 use account_utils::validator_definitions::ValidatorDefinitions;
 use clap::ArgMatches;
 use doppelganger_service::DoppelgangerService;
@@ -30,6 +25,11 @@ use initialized_validators::Error::UnableToOpenVotingKeystore;
 use notifier::spawn_notifier;
 use parking_lot::RwLock;
 use reqwest::Certificate;
+use safestake_operator::database::SafeStakeDatabase;
+use safestake_operator::report::status_report;
+use safestake_service::contract_service::ContractService;
+use safestake_service::discovery_service::DiscoveryService;
+use safestake_service::operator_service::SafestakeService;
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
@@ -589,7 +589,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         );
 
         let store = Arc::new(
-            LevelDB::<E>::open(&config.safestake_config.store_path.clone()).map_err(|e| format!("{:?}", e))?,
+            LevelDB::<E>::open(&config.safestake_config.store_path.clone())
+                .map_err(|e| format!("{:?}", e))?,
         );
 
         let operator_service = SafestakeService::new(
@@ -603,25 +604,23 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             &context.executor,
         );
 
-
         SafestakeService::serving(
             config.safestake_config.base_port,
             &context.executor,
-            operator_service
+            operator_service,
         );
-        // let addr = format!("[::1]:{}", config.safestake_config.base_port).parse().unwrap();
-        // context.executor.spawn(
-        //     async move {
-        //         Server::builder()
-        //             .add_service(SafestakeServer::new(operator_service))
-        //             .serve(addr)
-        //             .await
-        //             .unwrap()
-        //     },
-        //     "safestake_server",
-        // );
 
-        status_report(config.safestake_config.operator_id, config.safestake_config.node_secret.clone(), format!("{}:{}", config.safestake_config.ip, config.safestake_config.base_port), config.safestake_config.safestake_api.clone(), log, &context.executor);
+        status_report(
+            config.safestake_config.operator_id,
+            config.safestake_config.node_secret.clone(),
+            format!(
+                "{}:{}",
+                config.safestake_config.ip, config.safestake_config.base_port
+            ),
+            config.safestake_config.safestake_api.clone(),
+            log,
+            &context.executor,
+        );
 
         Ok(Self {
             context,

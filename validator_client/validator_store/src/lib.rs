@@ -23,7 +23,6 @@ use types::{
     ValidatorRegistrationData, VoluntaryExit,
 };
 
-use safestake_crypto::secret::Secret;
 use types::PublicKey;
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -218,8 +217,6 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         prefer_builder_proposals: Option<bool>,
         operator_committee_definition_path: P,
         operator_id: u32,
-        node_secret: Secret,
-        safestake_api: String,
     ) -> Result<ValidatorDefinition, String> {
         let mut validator_def = ValidatorDefinition::new_keystore_share_with_password_path(
             voting_keystore_share_path,
@@ -231,9 +228,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             builder_boost_factor,
             prefer_builder_proposals,
             operator_committee_definition_path,
-            operator_id,
-            node_secret,
-            safestake_api,
+            operator_id
         )
         .map_err(|e| format!("failed to create validator definitions: {:?}", e))?;
 

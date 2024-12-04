@@ -552,9 +552,7 @@ async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
                 None,
                 None,
                 committee_def_path,
-                keystore_share.share_id,
-                config.node_secret.clone(),
-                config.safestake_api.clone(),
+                keystore_share.share_id
             )
             .await;
 

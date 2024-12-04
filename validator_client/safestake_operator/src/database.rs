@@ -3,7 +3,7 @@ use alloy_primitives::Address;
 use bls::PublicKey;
 use filesystem::restrict_file_permissions;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, Transaction};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
 use slashing_protection::NotSafe;
 use std::fs::File;

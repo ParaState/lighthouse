@@ -20,11 +20,9 @@ use types::{Address, GRAFFITI_BYTES_LEN};
 use validator_http_api;
 use validator_http_metrics;
 
-use dvf_utils::{
-    DVF_NODE_SECRET_HEX_PATH, DVF_NODE_SECRET_PATH,
-    DVF_STORE_PATH, ROOT_VERSION,
-};
+use dvf_utils::{DVF_NODE_SECRET_HEX_PATH, DVF_NODE_SECRET_PATH, DVF_STORE_PATH, ROOT_VERSION};
 use safestake_crypto::secret::{Export, Secret};
+use safestake_operator::{NODE_SECRET, SAFESTAKE_API};
 use safestake_service::config::Config as SafeStakeConfig;
 
 use validator_store::Config as ValidatorStoreConfig;
@@ -466,6 +464,11 @@ impl Config {
             secret.write_hex(&node_secret_path)?;
             secret
         };
+        NODE_SECRET.set(secret.secret.clone()).unwrap();
+        SAFESTAKE_API
+            .set(config.safestake_config.safestake_api.clone())
+            .unwrap();
+
         config.safestake_config.node_secret = secret;
 
         // store
