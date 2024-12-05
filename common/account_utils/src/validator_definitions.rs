@@ -111,7 +111,7 @@ pub enum SigningDefinition {
         voting_keystore_share_password: Option<ZeroizeString>,
         #[serde(skip_serializing_if = "Option::is_none")]
         operator_committee_definition_path: Option<PathBuf>,
-        operator_id: u32
+        operator_id: u32,
     },
 }
 
@@ -294,7 +294,7 @@ impl ValidatorDefinition {
                 operator_committee_definition_path: Some(
                     operator_committee_definition_path.as_ref().into(),
                 ),
-                operator_id
+                operator_id,
             },
         })
     }

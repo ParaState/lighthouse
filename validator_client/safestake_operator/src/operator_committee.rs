@@ -12,8 +12,8 @@ use safestake_crypto::{secp::SecretKey, ThresholdSignature};
 use slog::Logger;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
-use types::{AttestationData, Hash256, PublicKey, Signature};
 use tonic::transport::Endpoint;
+use types::{AttestationData, Hash256, PublicKey, Signature};
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -164,7 +164,9 @@ impl DvfOperatorCommittee {
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
-                channel: Endpoint::from_shared(addr.to_string()).unwrap().connect_lazy()
+                channel: Endpoint::from_shared(addr.to_string())
+                    .unwrap()
+                    .connect_lazy(),
             };
             committee.add_operator(def.operator_ids[i], Box::new(operator));
         }

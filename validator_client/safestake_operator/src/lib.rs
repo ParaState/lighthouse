@@ -15,12 +15,12 @@ use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, SecretKey as SecpSecretKey, Signature as SecpSignature,
 };
 use slog::{error, info, Logger};
-use tonic::transport::Channel;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use tokio::sync::OnceCell;
+use tonic::transport::Channel;
 use types::{AttestationData, PublicKey};
 use types::{Hash256, Keypair, Signature};
-use tokio::sync::OnceCell;
 
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
@@ -121,7 +121,7 @@ pub struct RemoteOperator {
     pub operator_node_pk: SecpPublicKey,
     pub shared_public_key: PublicKey,
     pub logger: Logger,
-    pub channel: Channel
+    pub channel: Channel,
 }
 
 #[async_trait]
@@ -286,23 +286,23 @@ impl TOperator for RemoteOperator {
 pub async fn test_rpc_client() {
     use tonic::transport::Endpoint;
     use types::test_utils::TestRandom;
-    let channel = Endpoint::from_static("http://[::1]:50051")
-        .connect_lazy();
+    let channel = Endpoint::from_static("http://[::1]:50051").connect_lazy();
     let mut client = SafestakeClient::new(channel);
     let random_hash = Hash256::random();
     let mut rng = rand::thread_rng();
-    match client.check_liveness(
-    tonic::Request::new(CheckLivenessRequest {
-        version: VERSION,
-        msg: random_hash.0.to_vec(),
-        validator_public_key: PublicKey::random_for_test(&mut rng).serialize().to_vec(),
-    })).await {
+    match client
+        .check_liveness(tonic::Request::new(CheckLivenessRequest {
+            version: VERSION,
+            msg: random_hash.0.to_vec(),
+            validator_public_key: PublicKey::random_for_test(&mut rng).serialize().to_vec(),
+        }))
+        .await
+    {
         Ok(r) => {
             println!("{:?}", r);
-        },
+        }
         Err(e) => {
             println!("{:?}", e);
         }
     }
-    
 }

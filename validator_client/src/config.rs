@@ -20,7 +20,10 @@ use types::{Address, GRAFFITI_BYTES_LEN};
 use validator_http_api;
 use validator_http_metrics;
 
-use dvf_utils::{DVF_NODE_SECRET_HEX_PATH, DVF_NODE_SECRET_PATH, DVF_STORE_PATH, ROOT_VERSION};
+use dvf_utils::{
+    DVF_CONTRACT_BLOCK_PATH, DVF_NODE_SECRET_HEX_PATH, DVF_NODE_SECRET_PATH, DVF_STORE_PATH,
+    ROOT_VERSION,
+};
 use safestake_crypto::secret::{Export, Secret};
 use safestake_operator::{NODE_SECRET, SAFESTAKE_API};
 use safestake_service::config::Config as SafeStakeConfig;
@@ -475,7 +478,12 @@ impl Config {
         config.safestake_config.store_path = default_root_dir
             .join(get_network_dir(cli_args))
             .join(DVF_STORE_PATH);
-        info!(log, "config"; "store path" => format!("{:?}", &config.safestake_config.store_path));
+        info!(log, "read store path"; "store path" => format!("{:?}", &config.safestake_config.store_path));
+
+        config.safestake_config.contract_record_path = default_root_dir
+            .join(get_network_dir(cli_args))
+            .join(DVF_CONTRACT_BLOCK_PATH);
+        info!(log, "read contract block path"; "contract block path" => format!("{:?}", &config.safestake_config.contract_record_path));
 
         // contract
         config.safestake_config.network_contract = parse_required(cli_args, "network-contract")?;

@@ -228,7 +228,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             builder_boost_factor,
             prefer_builder_proposals,
             operator_committee_definition_path,
-            operator_id
+            operator_id,
         )
         .map_err(|e| format!("failed to create validator definitions: {:?}", e))?;
 
