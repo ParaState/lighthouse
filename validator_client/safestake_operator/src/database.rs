@@ -105,7 +105,7 @@ impl SafeStakeDatabase {
 
         conn.execute(
             "CREATE TABLE operator_socket_address(
-                public_key VARCHAR(100) NOT NULL,
+                public_key VARCHAR(100) NOT NULL PRIMARY KEY,
                 socket_address VARCHAR(30) NOT NULL,
                 seq INTEGER NOT NULL
             )",

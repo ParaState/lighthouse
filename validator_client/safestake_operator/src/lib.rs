@@ -121,13 +121,13 @@ pub struct RemoteOperator {
     pub operator_node_pk: SecpPublicKey,
     pub shared_public_key: PublicKey,
     pub logger: Logger,
-    pub client: Option<SafestakeClient<Channel>>
+    pub channel: Channel
 }
 
 #[async_trait]
 impl TOperator for RemoteOperator {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
-        let mut client = self.get_client().await?;
+        let mut client = SafestakeClient::new(self.channel.clone());
         let request = tonic::Request::new(GetSignatureRequest {
             version: VERSION,
             msg: msg.0.to_vec(),
@@ -140,10 +140,7 @@ impl TOperator for RemoteOperator {
     }
 
     async fn is_active(&self) -> bool {
-        let mut client = match self.get_client().await {
-            Ok(c) => c,
-            Err(_) => { return false; }
-        };
+        let mut client = SafestakeClient::new(self.channel.clone());
         let random_hash = Hash256::random();
         let request = tonic::Request::new(CheckLivenessRequest {
             version: VERSION,
@@ -182,10 +179,7 @@ impl TOperator for RemoteOperator {
     }
 
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
-        let mut client = match self.get_client().await {
-            Ok(c) => c,
-            Err(_) => { return ; }
-        };
+        let mut client = SafestakeClient::new(self.channel.clone());
         let data = serde_json::to_string(attest_data).unwrap();
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
@@ -218,10 +212,7 @@ impl TOperator for RemoteOperator {
     }
 
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256) {
-        let mut client = match self.get_client().await {
-            Ok(c) => c,
-            Err(_) => { return ; }
-        };
+        let mut client = SafestakeClient::new(self.channel.clone());
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
         let request = tonic::Request::new(ProposeFullBlockRequest {
@@ -252,17 +243,7 @@ impl TOperator for RemoteOperator {
     }
 
     async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256) {
-        let mut client = match SafestakeClient::connect(self.endpoint()).await {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    self.logger,
-                    "remote attest";
-                    "error" => %e
-                );
-                return;
-            }
-        };
+        let mut client = SafestakeClient::new(self.channel.clone());
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
         let request = tonic::Request::new(ProposeBlindedBlockRequest {
@@ -301,27 +282,27 @@ impl TOperator for RemoteOperator {
     }
 }
 
-impl RemoteOperator {
-    fn endpoint(&self) -> String {
-        format!("http://{}", self.base_address)
-    }
-
-    async fn get_client(&self) -> Result<SafestakeClient<Channel>, DvfError> {
-        match &self.client {
-            Some(c) => Ok(c.clone()),
-            None => {
-                match SafestakeClient::connect(self.endpoint()).await {
-                    Ok(c) => Ok(c),
-                    Err(e) => {
-                        error!(
-                            self.logger,
-                            "remote operator";
-                            "error" => %e
-                        );
-                        Err(DvfError::SignatureNotFound(e.to_string()))
-                    }
-                }
-            }
+#[tokio::test]
+pub async fn test_rpc_client() {
+    use tonic::transport::Endpoint;
+    use types::test_utils::TestRandom;
+    let channel = Endpoint::from_static("http://[::1]:50051")
+        .connect_lazy();
+    let mut client = SafestakeClient::new(channel);
+    let random_hash = Hash256::random();
+    let mut rng = rand::thread_rng();
+    match client.check_liveness(
+    tonic::Request::new(CheckLivenessRequest {
+        version: VERSION,
+        msg: random_hash.0.to_vec(),
+        validator_public_key: PublicKey::random_for_test(&mut rng).serialize().to_vec(),
+    })).await {
+        Ok(r) => {
+            println!("{:?}", r);
+        },
+        Err(e) => {
+            println!("{:?}", e);
         }
     }
+    
 }

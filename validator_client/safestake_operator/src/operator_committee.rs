@@ -13,6 +13,7 @@ use slog::Logger;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use types::{AttestationData, Hash256, PublicKey, Signature};
+use tonic::transport::Endpoint;
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -153,6 +154,7 @@ impl DvfOperatorCommittee {
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
+
             let operator = RemoteOperator {
                 self_operator_secretkey: node_secret_key.clone(),
                 self_operator_id: operator_id,
@@ -162,7 +164,7 @@ impl DvfOperatorCommittee {
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
-                client: None
+                channel: Endpoint::from_shared(addr.to_string()).unwrap().connect_lazy()
             };
             committee.add_operator(def.operator_ids[i], Box::new(operator));
         }
