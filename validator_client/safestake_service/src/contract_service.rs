@@ -672,3 +672,8 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     let id = u64::from_le_bytes(little_endian);
     id
 }
+
+#[test]
+fn test_rpc_parse() {
+    "http://10.1.50.98:8545".parse::<reqwest::Url>().unwrap();
+}

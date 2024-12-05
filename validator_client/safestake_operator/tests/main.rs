@@ -39,3 +39,15 @@ fn test_safestake_database() {
         db.query_all_validators(tx)
     });
 }
+
+#[test]
+fn test_safestake_database_socket_address() {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    remove_file("/tmp/safestake.sqlite").unwrap();
+    let db = SafeStakeDatabase::open_or_create(std::path::Path::new("/tmp/safestake.sqlite")).unwrap();
+
+    let _ = db.with_transaction(|tx| {
+        let _ = db.upsert_operator_socket_address(tx, &PublicKey([0;33]), &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080), 1);
+        db.upsert_operator_socket_address(tx, &PublicKey([0;33]), &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080), 1)
+    });
+}

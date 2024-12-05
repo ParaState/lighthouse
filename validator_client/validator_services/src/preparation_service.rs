@@ -436,13 +436,13 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
                         }) {
                             Ok(t) => t,
                             Err(e) => {
-                                warn!(
+                                debug!(
                                     log,
                                     "Unable to find registration timestamp";
                                     "error" => %e,
                                     "validator public key" => %&key.pubkey
                                 );
-                                1718640000
+                                1733373566
                             }
                         };
                         timestamp

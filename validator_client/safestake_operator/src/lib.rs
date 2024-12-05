@@ -170,7 +170,7 @@ impl TOperator for RemoteOperator {
             Err(e) => {
                 error!(
                     self.logger,
-                    "remove liveness";
+                    "remote operator liveness";
                     "error" => %e
                 );
             }
@@ -197,14 +197,14 @@ impl TOperator for RemoteOperator {
             Ok(_) => {
                 info!(
                     self.logger,
-                    "attestation";
+                    "remote attestation";
                     "signing root" => %domain_hash
                 );
             }
             Err(e) => {
                 error!(
                     self.logger,
-                    "attestation";
+                    "remote attestation";
                     "error" => %e
                 );
             }
@@ -228,14 +228,14 @@ impl TOperator for RemoteOperator {
             Ok(_) => {
                 info!(
                     self.logger,
-                    "propose full block";
+                    "remote proposal full block";
                     "signing root" => %domain_hash
                 );
             }
             Err(e) => {
                 error!(
                     self.logger,
-                    "propose full block";
+                    "remote proposal full block";
                     "error" => %e
                 );
             }
@@ -259,14 +259,14 @@ impl TOperator for RemoteOperator {
             Ok(_) => {
                 info!(
                     self.logger,
-                    "propose blinded block";
+                    "remote proposal blinded block";
                     "signing root" => %domain_hash
                 );
             }
             Err(e) => {
                 error!(
                     self.logger,
-                    "propose blinded block";
+                    "remote proposal blinded block";
                     "error" => %e
                 );
             }
