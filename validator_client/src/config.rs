@@ -182,6 +182,11 @@ impl Config {
                 .map_err(|e| format!("Failed to create {:?}: {:?}", config.validator_dir, e))?;
         }
 
+        if !config.secrets_dir.exists() {
+            fs::create_dir_all(&config.secrets_dir)
+                .map_err(|e| format!("Failed to create {:?}: {:?}", config.validator_dir, e))?;
+        }
+
         if let Some(beacon_nodes) = parse_optional::<String>(cli_args, "beacon-nodes")? {
             config.beacon_nodes = beacon_nodes
                 .split(',')
@@ -435,6 +440,8 @@ impl Config {
             };
 
         // safestake config
+        config.safestake_config.validator_dir = config.validator_dir.clone();
+        config.safestake_config.secrets_dir = config.validator_dir.clone();
 
         // operator id
         config.safestake_config.operator_id = parse_required(cli_args, "id")?;

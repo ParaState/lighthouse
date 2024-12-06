@@ -643,6 +643,7 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
 #[tokio::test]
 async fn test_rpc_parse() {
     use alloy_primitives::{address};
+    use safestake_crypto::secret::{Secret, Export};
     let rpc_url = "https://ethereum-holesky-rpc.publicnode.com".parse::<reqwest::Url>().unwrap();
     let provider: P = ProviderBuilder::new().on_http(rpc_url);
     let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
@@ -655,13 +656,81 @@ async fn test_rpc_parse() {
         .address(vec![registry_address, network_address, config_address, cluster_address])
         .event_signature(vec![VALIDATOR_REGISTRATION_TOPIC, VALIDATOR_REMOVAL_TOPIC, FEE_RECIPIENT_TOPIC]);
     let logs = provider.get_logs(&filter).await.unwrap();
-    println!("{:?}", logs[0]);
-    let SafeStakeNetwork::ValidatorRegistration {
-        _0,
-        _1,
-        _2,
-        _3,
-        _4,
-        _5,
-    } = logs[0].log_decode().map_err(|e| e.to_string()).unwrap().inner.data;
+    let operator_id = 1;
+    let registry_contract = SafeStakeRegistryContract::new(
+        registry_address,
+        provider.clone(),
+    );
+    
+    
+    for log in logs {
+        let SafeStakeNetwork::ValidatorRegistration {
+            _0,
+            _1,
+            _2,
+            _3,
+            _4,
+            _5,
+        } = log.log_decode().map_err(|e| e.to_string()).unwrap().inner.data;
+        let node_secret_path = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/node_key.json");
+        let validator_dir = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/validators");
+        let secrets_dir = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/secrets");
+        if _2.contains(&operator_id) {
+            let secret = if node_secret_path.exists() {
+                let secret = Secret::read(&node_secret_path).unwrap();
+                secret
+            } else {
+                panic!()
+            };
+            let validator_public_key = PublicKey::deserialize(_1.as_ref()).unwrap();
+            let mut operator_public_keys = vec![];
+            for operator_id in &_2 {
+                let operator = registry_contract.query_operator(*operator_id).await.unwrap();
+                operator_public_keys.push(operator.public_key);
+            }
+            let shared_public_keys: Vec<PublicKey> = _3
+                .iter()
+                .map(|shared_public_key| {
+                    PublicKey::deserialize(shared_public_key.as_ref()).unwrap()
+                })
+                .collect();
+
+            let self_index = _2
+                .iter()
+                .position(|x| *x == operator_id)
+                .unwrap();
+
+            // decrypt
+            let key_pair = {
+                let rng = rand::thread_rng();
+                let mut elgamal = Elgamal::new(rng);
+                let ciphertext = Ciphertext::from_bytes(&_4[self_index]);
+                let plain_shared_key = elgamal
+                    .decrypt(&ciphertext, &secret.secret)
+                    .unwrap();
+                let shared_secret_key = SecretKey::deserialize(&plain_shared_key).unwrap();
+                let shared_public_key = shared_secret_key.public_key();
+                Keypair::from_components(shared_public_key, shared_secret_key)
+            };
+
+            let keystore = KeystoreBuilder::new(&key_pair, INSECURE_PASSWORD, "".into()).unwrap()
+                .kdf(insecure_kdf())
+                .build()
+                .unwrap();
+
+            let keystore_share =
+                KeystoreShare::new(keystore, validator_public_key.clone(), operator_id);
+            println!("{:?}", keystore_share);
+            ShareBuilder::new(validator_dir.clone())
+                .password_dir(secrets_dir.clone())
+                .voting_keystore_share(keystore_share.clone(), INSECURE_PASSWORD)
+                .build()
+                .unwrap();
+
+            break;
+        }
+        
+    }
+
+    
 }   
