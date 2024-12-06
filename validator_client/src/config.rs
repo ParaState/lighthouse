@@ -441,7 +441,7 @@ impl Config {
 
         // safestake config
         config.safestake_config.validator_dir = config.validator_dir.clone();
-        config.safestake_config.secrets_dir = config.validator_dir.clone();
+        config.safestake_config.secrets_dir = config.secrets_dir.clone();
 
         // operator id
         config.safestake_config.operator_id = parse_required(cli_args, "id")?;
