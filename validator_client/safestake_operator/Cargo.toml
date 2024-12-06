@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
 
-[[test]]
-name = "safestake_operator_tests"
-path = "tests/main.rs"
-
 [dependencies]
 account_utils = { workspace = true }
 bincode = { workspace = true }
@@ -16,14 +12,11 @@ dvf_utils = { workspace = true }
 filesystem = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
-r2d2 = { workspace = true }
 reqwest = { workspace = true }
-rusqlite = { workspace = true }
 safestake_crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-slashing_protection = { workspace = true }
 slog = { workspace = true }
 store = { workspace = true }
 task_executor = { workspace = true }
@@ -37,7 +30,6 @@ chrono = { version = "0.4" }
 keccak-hash = "0.10.0"
 lazy_static = "1.5.0"
 prost = "0.12"
-r2d2_sqlite = "0.21.0"
 tonic = "0.11"
 url = "2"
 

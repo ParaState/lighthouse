@@ -1,0 +1,27 @@
+[package]
+name = "safestake_database"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "safestake_database_tests"
+path = "tests/main.rs"
+
+[dependencies]
+
+alloy-primitives = "0.8.13"
+r2d2_sqlite = "0.21.0"
+
+bls = { workspace = true }
+filesystem = { workspace = true }
+r2d2 = { workspace = true }
+rusqlite = { workspace = true }
+safestake_crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+slashing_protection = { workspace = true }
+types = { workspace = true }
+
+[dev-dependencies]
+rand = "0.8"

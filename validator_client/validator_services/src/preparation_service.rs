@@ -16,7 +16,7 @@ use types::{
 };
 use validator_store::{Error as ValidatorStoreError, ProposalData, ValidatorStore};
 
-use safestake_operator::database::SafeStakeDatabase;
+use safestake_database::SafeStakeDatabase;
 /// Number of epochs before the Bellatrix hard fork to begin posting proposer preparations.
 const PROPOSER_PREPARATION_LOOKAHEAD_EPOCHS: u64 = 2;
 

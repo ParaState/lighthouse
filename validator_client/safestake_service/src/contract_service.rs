@@ -1,8 +1,6 @@
 use crate::config::Config;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
-use account_utils::{
-    default_keystore_share_password_path, default_operator_committee_definition_path,
-};
+use account_utils::default_operator_committee_definition_path;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types::{Filter, Log};
@@ -14,8 +12,8 @@ use eth2_keystore_share::KeystoreShare;
 use parking_lot::RwLock;
 use safestake_crypto::elgamal::{Ciphertext, Elgamal};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
-use safestake_operator::database::SafeStakeDatabase;
-use safestake_operator::models::{Operator, Validator};
+use safestake_database::SafeStakeDatabase;
+use safestake_database::models::{Operator, Validator, ValidatorOperation};
 use safestake_operator::THRESHOLD_MAP;
 use serde::{Deserialize, Serialize};
 use slog::{error, info, warn, Logger};
@@ -23,17 +21,16 @@ use slot_clock::SlotClock;
 use std::fs::{remove_dir_all, remove_file, File};
 use std::net::SocketAddr;
 use std::path::Path;
-use std::str::FromStr;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use types::EthSpec;
-use types::{graffiti::GraffitiString, Address as H160};
+use types::Address as H160;
 use types::{Keypair, PublicKey, SecretKey};
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
-use validator_dir::{default_keystore_share_path, ShareBuilder};
+use validator_dir::ShareBuilder;
 use validator_store::ValidatorStore;
 
 sol!(
@@ -205,7 +202,6 @@ impl ContractService {
         let config_address = config.config_contract.parse::<Address>().unwrap();
         let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
         let mut query_interval = tokio::time::interval(Duration::from_secs(60));
-        let executor_ = executor.clone();
         executor.spawn(async move {
             loop {
                 query_interval.tick().await;
@@ -223,28 +219,22 @@ impl ContractService {
                                     continue;
                                 }
                                 for log in logs {
-                                    if let Some(handle) = executor_.handle() {
-                                        if let Err(e) = handle.block_on(
-                                            handle_events(
-                                                &log,
-                                                &logger,
-                                                &config,
-                                                validator_store.clone(),
-                                                &db,
-                                                keypairs.clone(),
-                                                &sender
-                                            )
-                                        ) {
-                                            warn!(logger, "process events"; "error reason" => e);
-                                            continue;
-                                        }
-                                        record.block_num = log.block_number.unwrap() + 1;
-                                    } else {
-                                        warn!(
-                                            logger,
-                                            "no handler found for executor";
-                                        )
+                                    
+                                    if let Err(e) = 
+                                        handle_events(
+                                            &log,
+                                            &logger,
+                                            &config,
+                                            validator_store.clone(),
+                                            &db,
+                                            keypairs.clone(),
+                                            &sender
+                                        ).await
+                                    {
+                                        warn!(logger, "process events"; "error reason" => e);
+                                        continue;
                                     }
+                                    record.block_num = log.block_number.unwrap() + 1;
                                 }
                                 let _ = record.to_file(&config.contract_record_path);
                             },
@@ -268,7 +258,6 @@ impl ContractService {
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
     ) {
-        let executor_ = executor.clone();
         let provider: P =
             ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
         let network_contract = SafeStakeNetworkContract::new(
@@ -295,25 +284,43 @@ impl ContractService {
                                         "current block" => current_block,
                                         "paid block" => paid_block,
                                     );
-
-                                    if let Some(handle) = executor_.handle() {
-                                        if let Err(e) = handle.block_on(
-                                            handle_validator_balance(
-                                                &validator_store,
-                                                &validator_public_key,
-                                                current_block,
-                                                paid_block
-                                            )
-                                        ) {
-                                            warn!(logger, "process events"; "error reason" => e);
-                                            continue;
+                                    if current_block > paid_block {
+                                        // validator fee is used up
+                                        match validator_store.is_enabled(&validator_public_key) {
+                                            Some(t) => {
+                                                if t {
+                                                    if let Err(e) = db.with_transaction(|tx| {
+                                                        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Disable)
+                                                    }) {
+                                                        error!(
+                                                            logger,
+                                                            "validator operation: disable";
+                                                            "error" => %e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            None => {}
                                         }
                                     } else {
-                                        warn!(
-                                            logger,
-                                            "no handler found for executor";
-                                        )
+                                        match validator_store.is_enabled(&validator_public_key) {
+                                            Some(t) => {
+                                                if !t {
+                                                    if let Err(e) = db.with_transaction(|tx| {
+                                                        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Enable)
+                                                    }) {
+                                                        error!(
+                                                            logger,
+                                                            "validator operation: enable";
+                                                            "error" => %e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            None => {}
+                                        }
                                     }
+                                    
                                 },
                                 Err(e) => {
                                     error!(
@@ -338,35 +345,6 @@ impl ContractService {
     }
 }
 
-async fn handle_validator_balance<T: SlotClock + 'static, E: EthSpec>(
-    validator_store: &Arc<ValidatorStore<T, E>>,
-    validator_public_key: &PublicKey,
-    current_block: u64,
-    paid_block: u64,
-) -> Result<(), String> {
-    if current_block > paid_block {
-        // validator fee is used up
-        match validator_store.is_enabled(validator_public_key).await {
-            Some(t) => {
-                if t {
-                    let _ = validator_store.disable_keystore(validator_public_key).await;
-                }
-            }
-            None => {}
-        }
-    } else {
-        match validator_store.is_enabled(validator_public_key).await {
-            Some(t) => {
-                if !t {
-                    let _ = validator_store.enable_keystore(validator_public_key).await;
-                }
-            }
-            None => {}
-        }
-    }
-    Ok(())
-}
-
 async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     log: &Log,
     logger: &Logger,
@@ -382,7 +360,6 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
                 log,
                 logger,
                 config,
-                validator_store,
                 db,
                 keypairs,
                 sender,
@@ -390,7 +367,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             .await?;
         }
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
-            handle_validator_removal(log, logger, config, validator_store, db, keypairs).await?;
+            handle_validator_removal(log, logger, config, db, keypairs).await?;
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
             handle_fee_recipient_set(log, logger, validator_store, db).await?;
@@ -400,11 +377,10 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     Ok(())
 }
 
-async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
+async fn handle_validator_registration(
     log: &Log,
     logger: &Logger,
     config: &Config,
-    validator_store: Arc<ValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
@@ -530,31 +506,16 @@ async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
         );
         def.to_file(committee_def_path.clone())
             .map_err(|e| format!("failed to save committee definition: {:?}", e))?;
-        let voting_keystore_share_path =
-            default_keystore_share_path(&keystore_share, config.validator_dir.clone());
-        let voting_keystore_share_password_path =
-            default_keystore_share_password_path(&keystore_share, config.secrets_dir.clone());
 
-        let fee_recipient = match db.with_transaction(|t| db.query_owner_fee_recipient(t, &owner)) {
-            Ok(a) => a,
-            Err(_) => owner,
-        };
-
-        let _ = validator_store
-            .add_validator_keystore_share(
-                voting_keystore_share_path,
-                voting_keystore_share_password_path,
-                true,
-                Some(GraffitiString::from_str("SafeStake Operator").unwrap()),
-                Some(H160::from_slice(fee_recipient.as_slice())),
-                None,
-                None,
-                None,
-                None,
-                committee_def_path,
-                keystore_share.share_id,
-            )
-            .await;
+        if let Err(e) = db.with_transaction(|tx| {
+            db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Add)
+        }) {
+            error!(
+                logger,
+                "validator operation: add";
+                "error" => %e
+            );
+        }
 
         let validator = Validator {
             owner,
@@ -570,11 +531,10 @@ async fn handle_validator_registration<T: SlotClock + 'static, E: EthSpec>(
     Ok(())
 }
 
-async fn handle_validator_removal<T: SlotClock + 'static, E: EthSpec>(
+async fn handle_validator_removal(
     log: &Log,
     logger: &Logger,
     config: &Config,
-    validator_store: Arc<ValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
 ) -> Result<(), String> {
@@ -601,9 +561,17 @@ async fn handle_validator_removal<T: SlotClock + 'static, E: EthSpec>(
     if password_file.exists() {
         let _ = remove_file(password_file);
     }
-    validator_store
-        .remove_validator_keystore(&validator_public_key)
-        .await;
+
+    if let Err(e) = db.with_transaction(|tx| {
+        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Remove)
+    }) {
+        error!(
+            logger,
+            "validator operation: remove";
+            "error" => %e
+        );
+    }
+
     keypairs.write().remove(&validator_public_key);
     info!(
         logger,
@@ -635,8 +603,7 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
             .set_validator_fee_recipient(
                 &validator_public_key,
                 H160::from_slice(fee_recipient.as_slice()),
-            )
-            .await;
+            );
 
         db.with_transaction(|t| {
             db.update_validator_registration_timestamp(

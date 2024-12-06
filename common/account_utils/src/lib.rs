@@ -79,6 +79,17 @@ pub fn default_keystore_share_password_path<P: AsRef<Path>>(
     ))
 }
 
+pub fn keystore_share_password_path<P: AsRef<Path>>(
+    secrets_dir: P,
+    validator_public_key: &PublicKey,
+    operator_id: u32,
+) -> PathBuf {
+    secrets_dir.as_ref().join(format!(
+        "{}_{}",
+        &validator_public_key, operator_id
+    ))
+}
+
 /// Returns the default path where an operator committee definition should be stored.
 pub fn default_operator_committee_definition_path<P: AsRef<Path>>(
     public_key: &PublicKey,

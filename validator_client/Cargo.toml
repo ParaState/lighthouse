@@ -46,4 +46,5 @@ dvf_utils = { workspace = true }
 safestake_crypto = { workspace = true }
 safestake_service = { workspace = true }
 safestake_operator = { workspace = true }
+safestake_database = { workspace = true }
 store = { workspace = true }

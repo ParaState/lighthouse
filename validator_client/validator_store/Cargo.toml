@@ -23,3 +23,4 @@ types = { workspace = true }
 validator_metrics = { workspace = true }
 
 safestake_crypto = { workspace = true }
+safestake_operator = { workspace = true }

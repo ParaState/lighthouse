@@ -1,4 +1,5 @@
 use crate::{write_password_to_file, BuilderError, ValidatorDir};
+use bls::PublicKey;
 use eth2_keystore::PlainText;
 use eth2_keystore_share::KeystoreShare;
 use std::fs::{create_dir_all, File};
@@ -86,6 +87,18 @@ pub fn keystore_share_password_path<P: AsRef<Path>>(
         "{}_{}",
         keystore.master_public_key, keystore.share_id
     ))
+}
+
+pub fn keystore_share_path<P: AsRef<Path>>(
+    validators_dir: P,
+    validator_public: &PublicKey,
+    operator_id: u32
+) -> PathBuf {
+    validators_dir
+        .as_ref()
+        .join(format!("{}", validator_public))
+        .join(format!("{}", operator_id))
+        .join(format!("{}", VOTING_KEYSTORE_SHARE_FILE))
 }
 
 pub fn default_keystore_share_dir<P: AsRef<Path>>(

@@ -3,7 +3,6 @@ use account_utils::{
     default_operator_committee_definition_path,
     operator_committee_definitions::OperatorCommitteeDefinition,
 };
-use bls::PublicKey;
 use dvf_utils::VERSION;
 use dvf_utils::{BOOT_ENRS_CONFIG_FILE, DEFAULT_BASE_PORT};
 use lighthouse_network::discv5::{
@@ -11,22 +10,18 @@ use lighthouse_network::discv5::{
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
-use safestake_operator::database::SafeStakeDatabase;
+use safestake_database::{SafeStakeDatabase, models::ValidatorOperation};
 use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
-use slog::{error, info, warn, Logger};
-use slot_clock::SlotClock;
+use slog::{error, info, Logger};
 use std::collections::HashMap;
 use std::fs::File;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use task_executor::TaskExecutor;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
-use types::EthSpec;
-use validator_store::ValidatorStore;
 
 pub const DISCOVERY_PORT_OFFSET: u16 = 4;
 
@@ -231,16 +226,14 @@ impl DiscoveryService {
         Ok(query_tx)
     }
 
-    pub fn spawn_operator_monitor<T: SlotClock + 'static, E: EthSpec>(
+    pub fn spawn_operator_monitor(
         logger: Logger,
         validator_dir: PathBuf,
         db: SafeStakeDatabase,
-        validator_store: Arc<ValidatorStore<T, E>>,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         executor: &TaskExecutor,
     ) {
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
-        let executor_ = executor.clone();
         executor.spawn(async move {
             loop {
                 query_interval.tick().await;
@@ -277,18 +270,14 @@ impl DiscoveryService {
                     if restart {
                         let _ = committee_def.save(committee_def_path.parent().unwrap());
                         // restart validator
-                        if let Some(handle) = executor_.handle() {
-                            if let Err(e) = handle.block_on(
-                                restart_validator(&validator_store, validator_public_key)
-                            ) {
-                                warn!(logger, "failed to restart validator"; "error reason" => e);
-                                continue;
-                            }
-                        } else {
-                            warn!(
+                        if let Err(e) = db.with_transaction(|tx| {
+                            db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Restart)
+                        }) {
+                            error!(
                                 logger,
-                                "no handler found for executor";
-                            )
+                                "validator operation: remove";
+                                "error" => %e
+                            );
                         }
                     }
 
@@ -319,22 +308,5 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
             let socket_address = SocketAddr::new(IpAddr::V4(ip), port);
             db.upsert_operator_socket_address(tx, &public_key, &socket_address, enr.seq())
         });
-    }
-}
-
-async fn restart_validator<T: SlotClock + 'static, E: EthSpec>(
-    validator_store: &Arc<ValidatorStore<T, E>>,
-    validator_public_key: &PublicKey,
-) -> Result<(), String> {
-    match validator_store.is_enabled(validator_public_key).await {
-        Some(enabled) => {
-            if enabled {
-                let _ = validator_store.disable_keystore(validator_public_key).await;
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                let _ = validator_store.enable_keystore(validator_public_key).await;
-            }
-            Ok(())
-        }
-        None => Ok(()),
     }
 }

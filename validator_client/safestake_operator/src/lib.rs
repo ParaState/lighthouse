@@ -1,6 +1,4 @@
-pub mod database;
 pub mod generic_operator_committee;
-pub mod models;
 pub mod operator_committee;
 pub mod proto;
 pub mod report;
@@ -19,8 +17,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::OnceCell;
 use tonic::transport::Channel;
-use types::{AttestationData, PublicKey};
+use types::{AttestationData, PublicKey, graffiti::GraffitiString};
 use types::{Hash256, Keypair, Signature};
+use std::str::FromStr;
 
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
@@ -29,6 +28,7 @@ lazy_static! {
         threshold_map.insert(7, 5);
         threshold_map
     };
+    pub static ref SafeStakeGraffiti: GraffitiString = GraffitiString::from_str("SafeStake Operator").unwrap();
 }
 
 pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();

@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 use safestake_crypto::secp::PublicKey;
-use safestake_operator::database::SafeStakeDatabase;
-use safestake_operator::models::{Operator, Validator};
+use safestake_database::SafeStakeDatabase;
+use safestake_database::models::{Operator, Validator};
 use std::fs::remove_file;
 use types::test_utils::TestRandom;
 use types::PublicKey as BlsPublicKey;
@@ -57,7 +57,7 @@ fn test_safestake_database() {
 #[test]
 fn test_safestake_database_socket_address() {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    remove_file("/tmp/safestake.sqlite").unwrap();
+    let _ = remove_file("/tmp/safestake.sqlite");
     let db =
         SafeStakeDatabase::open_or_create(std::path::Path::new("/tmp/safestake.sqlite")).unwrap();
 

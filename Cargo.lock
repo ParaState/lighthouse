@@ -8329,6 +8329,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "safestake_database"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "bls",
+ "filesystem",
+ "r2d2",
+ "r2d2_sqlite",
+ "rand",
+ "rusqlite",
+ "safestake_crypto",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "slashing_protection",
+ "types",
+]
+
+[[package]]
 name = "safestake_operator"
 version = "0.1.0"
 dependencies = [
@@ -8345,16 +8364,12 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "prost",
- "r2d2",
- "r2d2_sqlite",
  "rand",
  "reqwest 0.11.27",
- "rusqlite",
  "safestake_crypto",
  "serde",
  "serde_json",
  "serde_yaml",
- "slashing_protection",
  "slog",
  "store",
  "task_executor",
@@ -8392,6 +8407,7 @@ dependencies = [
  "rand",
  "reqwest 0.11.27",
  "safestake_crypto",
+ "safestake_database",
  "safestake_operator",
  "serde",
  "serde_json",
@@ -8407,6 +8423,7 @@ dependencies = [
  "types",
  "validator_dir",
  "validator_store",
+ "warp_utils",
 ]
 
 [[package]]
@@ -10496,6 +10513,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "reqwest 0.11.27",
  "safestake_crypto",
+ "safestake_database",
  "safestake_operator",
  "safestake_service",
  "sensitive_url",
@@ -10637,6 +10655,7 @@ dependencies = [
  "graffiti_file",
  "parking_lot 0.12.3",
  "safe_arith",
+ "safestake_database",
  "safestake_operator",
  "signing_method",
  "slog",
@@ -10657,6 +10676,7 @@ dependencies = [
  "initialized_validators",
  "parking_lot 0.12.3",
  "safestake_crypto",
+ "safestake_operator",
  "serde",
  "signing_method",
  "slashing_protection",

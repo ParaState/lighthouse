@@ -2,7 +2,7 @@ use dvf_utils::VERSION;
 use parking_lot::RwLock;
 use safestake_crypto::secp::{Digest, Signature};
 use safestake_crypto::secret::Secret;
-use safestake_operator::database::SafeStakeDatabase;
+use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::safestake_server::Safestake;
 use safestake_operator::proto::safestake_server::SafestakeServer;
 use safestake_operator::proto::{

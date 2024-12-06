@@ -23,4 +23,5 @@ tree_hash =  { workspace = true }
 bls =  { workspace = true }
 
 safestake_operator = { workspace = true }
+safestake_database = { workspace = true }
 signing_method = { workspace = true }

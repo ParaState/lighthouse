@@ -24,6 +24,9 @@ use types::{
 };
 
 use types::PublicKey;
+
+use safestake_operator::SafeStakeGraffiti;
+
 #[derive(Debug, PartialEq)]
 pub enum Error {
     DoppelgangerProtected(PublicKeyBytes),
@@ -1187,7 +1190,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         }
     }
 
-    pub async fn set_validator_fee_recipient(
+    pub fn set_validator_fee_recipient(
         &self,
         validator_public_key: &PublicKey,
         fee_recipient: Address,
@@ -1207,7 +1210,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         }
     }
 
-    pub async fn is_enabled(&self, validator_public_key: &PublicKey) -> Option<bool> {
+    pub fn is_enabled(&self, validator_public_key: &PublicKey) -> Option<bool> {
         self.validators.read().is_enabled(validator_public_key)
     }
 
@@ -1222,7 +1225,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 None,
                 None,
                 None,
-                None,
+                Some(SafeStakeGraffiti.clone()),
             )
             .await
         {
@@ -1248,7 +1251,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 None,
                 None,
                 None,
-                None,
+                Some(SafeStakeGraffiti.clone()),
             )
             .await
         {
