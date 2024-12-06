@@ -63,8 +63,8 @@ sol!(
             uint32[] operatorIds;
             bool enable;
         }
-        event ValidatorRegistration(address,bytes,uint32[],bytes[],bytes[],uint256);
-        event ValidatorRemoval(address,bytes);
+        event ValidatorRegistration(address indexed,bytes,uint32[],bytes[],bytes[],uint256);
+        event ValidatorRemoval(address indexed,bytes);
         mapping(bytes => ValidatorData) public _validatorDatas;
     }
 );
@@ -640,7 +640,28 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     id
 }
 
-#[test]
-fn test_rpc_parse() {
-    "http://10.1.50.98:8545".parse::<reqwest::Url>().unwrap();
-}
+#[tokio::test]
+async fn test_rpc_parse() {
+    use alloy_primitives::{address};
+    let rpc_url = "https://ethereum-holesky-rpc.publicnode.com".parse::<reqwest::Url>().unwrap();
+    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
+    let network_address = address!("34637C3bE556BD8fD6A6a741669a501B79A79e3B");
+    let config_address = address!("1EFB8c90381695584CcB117388Bba897b71e0635");
+    let cluster_address = address!("1EFB8c90381695584CcB117388Bba897b71e0635");
+    let filter = Filter::new()
+        .from_block(2390031)
+        .to_block(2390031 + 5000)
+        .address(vec![registry_address, network_address, config_address, cluster_address])
+        .event_signature(vec![VALIDATOR_REGISTRATION_TOPIC, VALIDATOR_REMOVAL_TOPIC, FEE_RECIPIENT_TOPIC]);
+    let logs = provider.get_logs(&filter).await.unwrap();
+    println!("{:?}", logs[0]);
+    let SafeStakeNetwork::ValidatorRegistration {
+        _0,
+        _1,
+        _2,
+        _3,
+        _4,
+        _5,
+    } = logs[0].log_decode().map_err(|e| e.to_string()).unwrap().inner.data;
+}   
