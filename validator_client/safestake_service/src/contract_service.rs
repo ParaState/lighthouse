@@ -3,7 +3,7 @@ use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use account_utils::default_operator_committee_definition_path;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types::{Filter, Log};
+use alloy_rpc_types::{Filter, Log, BlockTransactionsKind, BlockId, BlockNumberOrTag};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolEvent;
 use alloy_transport_http::{Client, Http};
@@ -219,11 +219,14 @@ impl ContractService {
                                     continue;
                                 }
                                 for log in logs {
-                                    
+                                    let log_block_num = log.block_number.unwrap();
+                                    // query block timestamp 
+                                    let block_timestamp = qeury_block_timestamp(&provider, log_block_num, &logger).await;
                                     if let Err(e) = 
                                         handle_events(
                                             &log,
                                             &logger,
+                                            block_timestamp,
                                             &config,
                                             validator_store.clone(),
                                             &db,
@@ -348,6 +351,7 @@ impl ContractService {
 async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     log: &Log,
     logger: &Logger,
+    block_timestamp: u64,
     config: &Config,
     validator_store: Arc<ValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
@@ -359,6 +363,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             handle_validator_registration(
                 log,
                 logger,
+                block_timestamp,
                 config,
                 db,
                 keypairs,
@@ -380,6 +385,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
 async fn handle_validator_registration(
     log: &Log,
     logger: &Logger,
+    block_timestamp: u64,
     config: &Config,
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
@@ -516,13 +522,13 @@ async fn handle_validator_registration(
                 "error" => %e
             );
         }
-
+        warn!(logger, "log"; "event log" => format!("{:?}", log));
         let validator = Validator {
             owner,
             public_key: validator_public_key.clone(),
             releated_operators: operator_ids.clone(),
             active: true,
-            registration_timestamp: log.block_timestamp.unwrap(),
+            registration_timestamp: block_timestamp,
         };
         db.with_transaction(|t| db.insert_validator(t, &validator))
             .map_err(|e| format!("failed to insert validator {}", e.to_string()))?;
@@ -640,9 +646,36 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     id
 }
 
+async fn qeury_block_timestamp(
+    provider: &P,
+    block_number: u64,
+    logger: &Logger
+) -> u64 {
+    match provider.get_block(BlockId::Number(BlockNumberOrTag::Number(block_number)), BlockTransactionsKind::Hashes).await {
+        Ok(r) => {
+            if let Some(b) = r {
+                b.header.inner.timestamp
+            } else {
+                1733373566
+            }
+        },
+        Err(e) => {
+            warn!(
+                logger,
+                "query block timestamp";
+                "error" => %e
+            );
+            1733373566
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_rpc_parse() {
     use alloy_primitives::{address};
+    use alloy_rpc_types::BlockTransactionsKind;
+    use alloy_rpc_types::BlockId;
+    use alloy_rpc_types::BlockNumberOrTag;
     use safestake_crypto::secret::{Secret, Export};
     let rpc_url = "https://ethereum-holesky-rpc.publicnode.com".parse::<reqwest::Url>().unwrap();
     let provider: P = ProviderBuilder::new().on_http(rpc_url);
@@ -656,13 +689,13 @@ async fn test_rpc_parse() {
         .address(vec![registry_address, network_address, config_address, cluster_address])
         .event_signature(vec![VALIDATOR_REGISTRATION_TOPIC, VALIDATOR_REMOVAL_TOPIC, FEE_RECIPIENT_TOPIC]);
     let logs = provider.get_logs(&filter).await.unwrap();
-    let operator_id = 1;
+    let operator_id = 2;
     let registry_contract = SafeStakeRegistryContract::new(
         registry_address,
         provider.clone(),
     );
     
-    
+    println!("{:?}", provider.get_block(BlockId::Number(BlockNumberOrTag::Number(2390260)), BlockTransactionsKind::Hashes).await.unwrap().unwrap().header.inner.timestamp);
     for log in logs {
         let SafeStakeNetwork::ValidatorRegistration {
             _0,
