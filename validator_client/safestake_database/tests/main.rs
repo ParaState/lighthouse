@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 use safestake_crypto::secp::PublicKey;
-use safestake_database::SafeStakeDatabase;
 use safestake_database::models::{Operator, Validator};
+use safestake_database::SafeStakeDatabase;
 use std::fs::remove_file;
 use types::test_utils::TestRandom;
 use types::PublicKey as BlsPublicKey;

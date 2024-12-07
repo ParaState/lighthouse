@@ -35,7 +35,9 @@ types = { workspace = true }
 validator_dir = { workspace = true, features = ["insecure_keys"] }
 validator_store = { workspace = true }
 warp_utils = { workspace = true }
-
+validator_http_api = { workspace = true }
+sensitive_url = { workspace = true }
+eth2 ={ workspace = true }
 alloy-contract = "0.6.4"
 alloy-primitives = "0.8.13"
 alloy-provider = "0.6.4"

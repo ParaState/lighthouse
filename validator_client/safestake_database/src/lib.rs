@@ -1,11 +1,9 @@
-
 pub mod models;
 
 use crate::models::{Operator, Validator};
 use alloy_primitives::Address;
 use bls::PublicKey;
 use filesystem::restrict_file_permissions;
-use models::ValidatorOperation;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Transaction};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
@@ -120,16 +118,6 @@ impl SafeStakeDatabase {
             "CREATE TABLE owner_fee_recipient(
                 owner CHARACTER(40) NOT NULL PRIMARY KEY,
                 fee_recipient CHARACTER(40) NOT NULL
-            )",
-            params![],
-        )?;
-
-        conn.execute(
-            "CREATE TABLE validator_operations(
-                id INTEGER PRIMARY KEY, 
-                public_key CHARACTER(96) NOT NULL,
-                operation INTEGER  NOT NULL,
-                processed INTEGER DEFAULT 0 NOT NULL
             )",
             params![],
         )?;
@@ -372,39 +360,4 @@ impl SafeStakeDatabase {
             Ok(Some(SecpPublicKey::from_base64(&public_key).unwrap()))
         })?)
     }
-
-    pub fn insert_validator_operation(
-        &self,
-        txn: &Transaction,
-        validator_public_key: &PublicKey,
-        operation: ValidatorOperation
-    ) -> Result<(), NotSafe> {
-        txn.execute("INSERT INTO validator_operations(public_key, operation) values(?1, ?2)", params![validator_public_key.as_hex_string(), operation as u32])?;
-        Ok(())
-    }
-
-    pub fn handle_validator_operation(
-        &self,
-        txn: &Transaction,
-    ) -> Result<Vec<(u64, PublicKey, ValidatorOperation)>, NotSafe> {
-        txn.prepare("select id, public_key, operation from validator_operations where processed = 0")?.query_and_then(params![], |row| {
-            let id: u64 = row.get(0).unwrap();
-            let public_key: String = row.get(1).unwrap();
-            let public_key = PublicKey::from_str(&public_key).unwrap();
-            let operation: u32 = row.get(2).unwrap();
-            let operation: ValidatorOperation = ValidatorOperation::try_from(operation).unwrap();
-            Ok((id, public_key, operation))
-        })?
-        .collect()
-    }
-
-    pub fn update_validator_operation(
-        &self,
-        txn: &Transaction,
-        id: u64
-    ) -> Result<(), NotSafe> {
-        txn.execute("update validator_operations set processed = 1 where id = ?1", params![id])?;
-        Ok(())
-    }
 }
-

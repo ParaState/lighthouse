@@ -1,20 +1,24 @@
 use crate::config::Config;
-use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use account_utils::default_operator_committee_definition_path;
+use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types::{Filter, Log, BlockTransactionsKind, BlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactionsKind, Filter, Log};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolEvent;
 use alloy_transport_http::{Client, Http};
+use eth2::lighthouse_vc::{
+    http_client::ValidatorClientHttpClient, types::KeystoreShareValidatorPostRequest,
+};
 use eth2_keystore::KeystoreBuilder;
 use eth2_keystore_share::KeystoreShare;
 use parking_lot::RwLock;
 use safestake_crypto::elgamal::{Ciphertext, Elgamal};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
+use safestake_database::models::{Operator, Validator};
 use safestake_database::SafeStakeDatabase;
-use safestake_database::models::{Operator, Validator, ValidatorOperation};
-use safestake_operator::THRESHOLD_MAP;
+use safestake_operator::{SafeStakeGraffiti, THRESHOLD_MAP};
+use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
 use slog::{error, info, warn, Logger};
 use slot_clock::SlotClock;
@@ -26,13 +30,13 @@ use std::{collections::HashMap, sync::Arc};
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use types::EthSpec;
 use types::Address as H160;
+use types::EthSpec;
 use types::{Keypair, PublicKey, SecretKey};
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
+use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
-
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -201,29 +205,47 @@ impl ContractService {
         let network_address = config.network_contract.parse::<Address>().unwrap();
         let config_address = config.config_contract.parse::<Address>().unwrap();
         let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
-        let mut query_interval = tokio::time::interval(Duration::from_secs(60));
-        executor.spawn(async move {
-            loop {
-                query_interval.tick().await;
-                match provider.get_block_number().await {
-                    Ok(current_block) => {
-                        let filter = Filter::new()
-                            .from_block(record.block_num)
-                            .to_block(std::cmp::min(current_block, record.block_num + 1024))
-                            .address(vec![registry_address, network_address, config_address, cluster_address])
-                            .event_signature(vec![VALIDATOR_REGISTRATION_TOPIC, VALIDATOR_REMOVAL_TOPIC, FEE_RECIPIENT_TOPIC]);
-                        match provider.get_logs(&filter).await {
-                            Ok(logs) => {
-                                if logs.len() == 0 {
-                                    record.block_num = std::cmp::min(current_block, record.block_num + 1024 + 1);
-                                    continue;
-                                }
-                                for log in logs {
-                                    let log_block_num = log.block_number.unwrap();
-                                    // query block timestamp 
-                                    let block_timestamp = qeury_block_timestamp(&provider, log_block_num, &logger).await;
-                                    if let Err(e) = 
-                                        handle_events(
+        let mut query_interval = tokio::time::interval(Duration::from_secs(3));
+
+        let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
+        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+        let api_pubkey = api_secret.api_token();
+        let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
+
+        executor.spawn(
+            async move {
+                loop {
+                    query_interval.tick().await;
+                    match provider.get_block_number().await {
+                        Ok(current_block) => {
+                            let target_block = record.block_num + 10000;
+                            let filter = Filter::new()
+                                .from_block(record.block_num)
+                                .to_block(std::cmp::min(current_block, target_block))
+                                .address(vec![
+                                    registry_address,
+                                    network_address,
+                                    config_address,
+                                    cluster_address,
+                                ])
+                                .event_signature(vec![
+                                    VALIDATOR_REGISTRATION_TOPIC,
+                                    VALIDATOR_REMOVAL_TOPIC,
+                                    FEE_RECIPIENT_TOPIC,
+                                ]);
+                            match provider.get_logs(&filter).await {
+                                Ok(mut logs) => {
+                                    logs.sort_by_key(|log| log.block_number.unwrap());
+                                    for log in logs {
+                                        let log_block_num = log.block_number.unwrap();
+                                        // query block timestamp
+                                        let block_timestamp = qeury_block_timestamp(
+                                            &provider,
+                                            log_block_num,
+                                            &logger,
+                                        )
+                                        .await;
+                                        if let Err(e) = handle_events(
                                             &log,
                                             &logger,
                                             block_timestamp,
@@ -231,27 +253,34 @@ impl ContractService {
                                             validator_store.clone(),
                                             &db,
                                             keypairs.clone(),
-                                            &sender
-                                        ).await
-                                    {
-                                        warn!(logger, "process events"; "error reason" => e);
-                                        continue;
+                                            &sender,
+                                            &client,
+                                        )
+                                        .await
+                                        {
+                                            warn!(logger, "process events"; "error reason" => e);
+                                            continue;
+                                        }
+
+                                        tokio::task::spawn_blocking(|| {});
                                     }
-                                    record.block_num = log.block_number.unwrap() + 1;
+                                    record.block_num =
+                                        std::cmp::min(current_block, target_block + 1);
+                                    let _ = record.to_file(&config.contract_record_path);
                                 }
-                                let _ = record.to_file(&config.contract_record_path);
-                            },
-                            Err(e) => {
-                                warn!(logger, "contract service"; "rpc error" => e.to_string());
+                                Err(e) => {
+                                    warn!(logger, "contract service"; "rpc error" => e.to_string());
+                                }
                             }
                         }
-                    },
-                    Err(e) => {
-                        warn!(logger, "contract service"; "rpc error" => e.to_string());
+                        Err(e) => {
+                            warn!(logger, "contract service"; "rpc error" => e.to_string());
+                        }
                     }
                 }
-            }
-        }, "pull_events");
+            },
+            "pull_events",
+        );
     }
 
     pub fn spawn_validator_monitor<T: SlotClock + 'static, E: EthSpec>(
@@ -268,6 +297,11 @@ impl ContractService {
             provider.clone(),
         );
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 3));
+        let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
+        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+        let api_pubkey = api_secret.api_token();
+        let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
+
         executor.spawn(async move {
             loop {
                 query_interval.tick().await;
@@ -292,14 +326,16 @@ impl ContractService {
                                         match validator_store.is_enabled(&validator_public_key) {
                                             Some(t) => {
                                                 if t {
-                                                    if let Err(e) = db.with_transaction(|tx| {
-                                                        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Disable)
-                                                    }) {
-                                                        error!(
-                                                            logger,
-                                                            "validator operation: disable";
-                                                            "error" => %e
-                                                        );
+                                                    match client.post_validators_disable(&validator_public_key.compress()).await {
+                                                        Ok(()) => {},
+                                                        Err(e) => {
+                                                            error!(
+                                                                logger,
+                                                                "failed to disable validator";
+                                                                "validator public key" => %validator_public_key,
+                                                                "error" => %e
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -309,21 +345,22 @@ impl ContractService {
                                         match validator_store.is_enabled(&validator_public_key) {
                                             Some(t) => {
                                                 if !t {
-                                                    if let Err(e) = db.with_transaction(|tx| {
-                                                        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Enable)
-                                                    }) {
-                                                        error!(
-                                                            logger,
-                                                            "validator operation: enable";
-                                                            "error" => %e
-                                                        );
+                                                    match client.post_validators_enable(&validator_public_key.compress()).await {
+                                                        Ok(()) => {},
+                                                        Err(e) => {
+                                                            error!(
+                                                                logger,
+                                                                "failed to enable validator";
+                                                                "validator public key" => %validator_public_key,
+                                                                "error" => %e
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
                                             None => {}
                                         }
                                     }
-                                    
                                 },
                                 Err(e) => {
                                     error!(
@@ -357,6 +394,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+    client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
@@ -368,14 +406,15 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
                 db,
                 keypairs,
                 sender,
+                client,
             )
             .await?;
         }
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
-            handle_validator_removal(log, logger, config, db, keypairs).await?;
+            handle_validator_removal(log, logger, config, db, keypairs, client).await?;
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
-            handle_fee_recipient_set(log, logger, validator_store, db).await?;
+            handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
         }
         _ => {}
     };
@@ -390,6 +429,7 @@ async fn handle_validator_registration(
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+    client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRegistration {
         _0,
@@ -403,13 +443,6 @@ async fn handle_validator_registration(
     let validator_public_key = PublicKey::deserialize(_1.as_ref())
         .map_err(|_| format!("failed to deserialize validator public key"))?;
     let operator_ids = _2;
-    info!(
-        logger,
-        "validator registration";
-        "owner" => %owner,
-        "public key" => %validator_public_key,
-        "operatrs" => format!("{:?}", operator_ids),
-    );
     let self_operator_id = config.operator_id;
     let provider: P = ProviderBuilder::new().on_http(
         config
@@ -427,6 +460,13 @@ async fn handle_validator_registration(
     let secret = config.node_secret.clone();
 
     if operator_ids.contains(&self_operator_id) {
+        info!(
+            logger,
+            "validator registration";
+            "owner" => %owner,
+            "public key" => %validator_public_key,
+            "operatrs" => format!("{:?}", operator_ids),
+        );
         let mut operator_public_keys = vec![];
         for operator_id in &operator_ids {
             let operator = registry_contract.query_operator(*operator_id).await?;
@@ -434,7 +474,7 @@ async fn handle_validator_registration(
                 .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
             operator_public_keys.push(operator.public_key);
         }
-        let shared_public_keys: Vec<Result<PublicKey, String>> = _3
+        let shared_public_keys: Vec<PublicKey> = _3
             .iter()
             .map(|shared_public_key| {
                 PublicKey::deserialize(shared_public_key.as_ref()).map_err(|e: bls::Error| {
@@ -442,15 +482,11 @@ async fn handle_validator_registration(
                     format!("{:?}", e)
                 })
             })
-            .collect();
-        if shared_public_keys.iter().any(|x| !x.is_ok()) {
-            return Err(format!(
-                "failed to deserialize shared public key, validator: {}",
-                validator_public_key
-            ));
+            .flatten()
+            .collect::<Vec<PublicKey>>();
+        if shared_public_keys.len() != operator_ids.len() {
+            return Err("failed to deserialize shared public key".to_string());
         }
-        let shared_public_keys: Vec<PublicKey> =
-            shared_public_keys.into_iter().map(|x| x.unwrap()).collect();
 
         let self_index = operator_ids
             .iter()
@@ -512,17 +548,30 @@ async fn handle_validator_registration(
         );
         def.to_file(committee_def_path.clone())
             .map_err(|e| format!("failed to save committee definition: {:?}", e))?;
+        let fee_recipient = match db.with_transaction(|t| db.query_owner_fee_recipient(t, &owner)) {
+            Ok(a) => a,
+            Err(_) => owner,
+        };
 
-        if let Err(e) = db.with_transaction(|tx| {
-            db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Add)
-        }) {
-            error!(
-                logger,
-                "validator operation: add";
-                "error" => %e
-            );
-        }
-        warn!(logger, "log"; "event log" => format!("{:?}", log));
+        match client
+            .post_validators_keystore_share(&KeystoreShareValidatorPostRequest {
+                voting_pubkey: validator_public_key.compress(),
+                suggested_fee_recipient: Some(fee_recipient),
+                graffiti: Some(SafeStakeGraffiti.clone()),
+                operator_id: self_operator_id,
+            })
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!(
+                    logger,
+                    "failed to add validator keystore share";
+                    "error" => %e
+                );
+            }
+        };
+
         let validator = Validator {
             owner,
             public_key: validator_public_key.clone(),
@@ -543,6 +592,7 @@ async fn handle_validator_removal(
     config: &Config,
     db: &SafeStakeDatabase,
     keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+    client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRemoval { _0, _1 } =
         log.log_decode().map_err(|e| e.to_string())?.inner.data;
@@ -550,8 +600,29 @@ async fn handle_validator_removal(
         error!(logger, "failed to deserialize shared public key");
         format!("{:?}", e)
     })?;
-    db.with_transaction(|t| db.delete_validator(t, &validator_public_key))
-        .map_err(|e| format!("failed to delete validator {}", e.to_string()))?;
+
+    if keypairs.read().get(&validator_public_key).is_none() {
+        return Ok(());
+    }
+
+    match client
+        .delete_validators_keystore_share(&KeystoreShareValidatorPostRequest {
+            voting_pubkey: validator_public_key.compress(),
+            suggested_fee_recipient: None,
+            graffiti: None,
+            operator_id: config.operator_id,
+        })
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            error!(
+                logger,
+                "failed to delete validator keystore share";
+                "error" => %e
+            );
+        }
+    };
 
     // delete validator dir
     let deleted_validator_dir = config
@@ -568,15 +639,9 @@ async fn handle_validator_removal(
         let _ = remove_file(password_file);
     }
 
-    if let Err(e) = db.with_transaction(|tx| {
-        db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Remove)
-    }) {
-        error!(
-            logger,
-            "validator operation: remove";
-            "error" => %e
-        );
-    }
+    let _ = db
+        .with_transaction(|t| db.delete_validator(t, &validator_public_key))
+        .map_err(|e| format!("failed to delete validator {}", e.to_string()));
 
     keypairs.write().remove(&validator_public_key);
     info!(
@@ -592,6 +657,7 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
     logger: &Logger,
     validator_store: Arc<ValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
+    block_timestamp: u64,
 ) -> Result<(), String> {
     let SafeStakeConfig::FeeRecipientAddressChanged { _0, _1 } =
         log.log_decode().map_err(|e| e.to_string())?.inner.data;
@@ -605,18 +671,13 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
         .map_err(|e| format!("failed to delete validator {}", e.to_string()))?;
 
     for validator_public_key in validator_public_keys {
-        validator_store
-            .set_validator_fee_recipient(
-                &validator_public_key,
-                H160::from_slice(fee_recipient.as_slice()),
-            );
+        validator_store.set_validator_fee_recipient(
+            &validator_public_key,
+            H160::from_slice(fee_recipient.as_slice()),
+        );
 
         db.with_transaction(|t| {
-            db.update_validator_registration_timestamp(
-                t,
-                &validator_public_key,
-                log.block_timestamp.unwrap(),
-            )
+            db.update_validator_registration_timestamp(t, &validator_public_key, block_timestamp)
         })
         .map_err(|e| {
             format!(
@@ -646,19 +707,21 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     id
 }
 
-async fn qeury_block_timestamp(
-    provider: &P,
-    block_number: u64,
-    logger: &Logger
-) -> u64 {
-    match provider.get_block(BlockId::Number(BlockNumberOrTag::Number(block_number)), BlockTransactionsKind::Hashes).await {
+async fn qeury_block_timestamp(provider: &P, block_number: u64, logger: &Logger) -> u64 {
+    match provider
+        .get_block(
+            BlockId::Number(BlockNumberOrTag::Number(block_number)),
+            BlockTransactionsKind::Hashes,
+        )
+        .await
+    {
         Ok(r) => {
             if let Some(b) = r {
                 b.header.inner.timestamp
             } else {
                 1733373566
             }
-        },
+        }
         Err(e) => {
             warn!(
                 logger,
@@ -672,12 +735,14 @@ async fn qeury_block_timestamp(
 
 #[tokio::test]
 async fn test_rpc_parse() {
-    use alloy_primitives::{address};
-    use alloy_rpc_types::BlockTransactionsKind;
+    use alloy_primitives::address;
     use alloy_rpc_types::BlockId;
     use alloy_rpc_types::BlockNumberOrTag;
-    use safestake_crypto::secret::{Secret, Export};
-    let rpc_url = "https://ethereum-holesky-rpc.publicnode.com".parse::<reqwest::Url>().unwrap();
+    use alloy_rpc_types::BlockTransactionsKind;
+    use safestake_crypto::secret::{Export, Secret};
+    let rpc_url = "https://ethereum-holesky-rpc.publicnode.com"
+        .parse::<reqwest::Url>()
+        .unwrap();
     let provider: P = ProviderBuilder::new().on_http(rpc_url);
     let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
     let network_address = address!("34637C3bE556BD8fD6A6a741669a501B79A79e3B");
@@ -686,16 +751,35 @@ async fn test_rpc_parse() {
     let filter = Filter::new()
         .from_block(2390031)
         .to_block(2390031 + 5000)
-        .address(vec![registry_address, network_address, config_address, cluster_address])
-        .event_signature(vec![VALIDATOR_REGISTRATION_TOPIC, VALIDATOR_REMOVAL_TOPIC, FEE_RECIPIENT_TOPIC]);
+        .address(vec![
+            registry_address,
+            network_address,
+            config_address,
+            cluster_address,
+        ])
+        .event_signature(vec![
+            VALIDATOR_REGISTRATION_TOPIC,
+            VALIDATOR_REMOVAL_TOPIC,
+            FEE_RECIPIENT_TOPIC,
+        ]);
     let logs = provider.get_logs(&filter).await.unwrap();
     let operator_id = 2;
-    let registry_contract = SafeStakeRegistryContract::new(
-        registry_address,
-        provider.clone(),
+    let registry_contract = SafeStakeRegistryContract::new(registry_address, provider.clone());
+
+    println!(
+        "{:?}",
+        provider
+            .get_block(
+                BlockId::Number(BlockNumberOrTag::Number(2390260)),
+                BlockTransactionsKind::Hashes
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .inner
+            .timestamp
     );
-    
-    println!("{:?}", provider.get_block(BlockId::Number(BlockNumberOrTag::Number(2390260)), BlockTransactionsKind::Hashes).await.unwrap().unwrap().header.inner.timestamp);
     for log in logs {
         let SafeStakeNetwork::ValidatorRegistration {
             _0,
@@ -704,10 +788,21 @@ async fn test_rpc_parse() {
             _3,
             _4,
             _5,
-        } = log.log_decode().map_err(|e| e.to_string()).unwrap().inner.data;
-        let node_secret_path = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/node_key.json");
-        let validator_dir = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/validators");
-        let secrets_dir = dirs::home_dir().unwrap().join(".lighthouse/v1/holesky/secrets");
+        } = log
+            .log_decode()
+            .map_err(|e| e.to_string())
+            .unwrap()
+            .inner
+            .data;
+        let node_secret_path = dirs::home_dir()
+            .unwrap()
+            .join(".lighthouse/v1/holesky/node_key.json");
+        let validator_dir = dirs::home_dir()
+            .unwrap()
+            .join(".lighthouse/v1/holesky/validators");
+        let secrets_dir = dirs::home_dir()
+            .unwrap()
+            .join(".lighthouse/v1/holesky/secrets");
         if _2.contains(&operator_id) {
             let secret = if node_secret_path.exists() {
                 let secret = Secret::read(&node_secret_path).unwrap();
@@ -718,7 +813,10 @@ async fn test_rpc_parse() {
             let validator_public_key = PublicKey::deserialize(_1.as_ref()).unwrap();
             let mut operator_public_keys = vec![];
             for operator_id in &_2 {
-                let operator = registry_contract.query_operator(*operator_id).await.unwrap();
+                let operator = registry_contract
+                    .query_operator(*operator_id)
+                    .await
+                    .unwrap();
                 operator_public_keys.push(operator.public_key);
             }
             let shared_public_keys: Vec<PublicKey> = _3
@@ -728,25 +826,21 @@ async fn test_rpc_parse() {
                 })
                 .collect();
 
-            let self_index = _2
-                .iter()
-                .position(|x| *x == operator_id)
-                .unwrap();
+            let self_index = _2.iter().position(|x| *x == operator_id).unwrap();
 
             // decrypt
             let key_pair = {
                 let rng = rand::thread_rng();
                 let mut elgamal = Elgamal::new(rng);
                 let ciphertext = Ciphertext::from_bytes(&_4[self_index]);
-                let plain_shared_key = elgamal
-                    .decrypt(&ciphertext, &secret.secret)
-                    .unwrap();
+                let plain_shared_key = elgamal.decrypt(&ciphertext, &secret.secret).unwrap();
                 let shared_secret_key = SecretKey::deserialize(&plain_shared_key).unwrap();
                 let shared_public_key = shared_secret_key.public_key();
                 Keypair::from_components(shared_public_key, shared_secret_key)
             };
 
-            let keystore = KeystoreBuilder::new(&key_pair, INSECURE_PASSWORD, "".into()).unwrap()
+            let keystore = KeystoreBuilder::new(&key_pair, INSECURE_PASSWORD, "".into())
+                .unwrap()
                 .kdf(insecure_kdf())
                 .build()
                 .unwrap();
@@ -762,8 +856,5 @@ async fn test_rpc_parse() {
 
             break;
         }
-        
     }
-
-    
-}   
+}

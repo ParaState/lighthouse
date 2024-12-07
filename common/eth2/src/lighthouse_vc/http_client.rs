@@ -680,6 +680,78 @@ impl ValidatorClientHttpClient {
         let url = self.make_graffiti_url(pubkey)?;
         self.delete(url).await
     }
+
+    /// `POST lighthouse/validators/keystore_share`
+    pub async fn post_validators_keystore_share(
+        &self,
+        request: &KeystoreShareValidatorPostRequest,
+    ) -> Result<GenericResponse<ValidatorData>, Error> {
+        let mut path = self.server.full.clone();
+
+        path.path_segments_mut()
+            .map_err(|()| Error::InvalidUrl(self.server.clone()))?
+            .push("lighthouse")
+            .push("validators")
+            .push("keystore_share");
+
+        self.post(path, &request).await
+    }
+
+    // DELETE lighthouse/validators/keystore_share
+    pub async fn delete_validators_keystore_share(
+        &self,
+        req: &KeystoreShareValidatorPostRequest,
+    ) -> Result<GenericResponse<ValidatorData>, Error> {
+        let mut path = self.server.full.clone();
+
+        path.path_segments_mut()
+            .map_err(|()| Error::InvalidUrl(self.server.clone()))?
+            .push("lighthouse")
+            .push("validators")
+            .push("keystore_share");
+
+        self.delete_with_unsigned_response(path, req).await
+    }
+
+    // POST /eth/v1/validator/{pubkey}/enable
+    pub async fn post_validators_enable(&self, pubkey: &PublicKeyBytes) -> Result<(), Error> {
+        let mut url = self.server.full.clone();
+        url.path_segments_mut()
+            .map_err(|()| Error::InvalidUrl(self.server.clone()))?
+            .push("eth")
+            .push("v1")
+            .push("validator")
+            .push(&pubkey.to_string())
+            .push("enable");
+        let _ = self
+            .client
+            .post(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .map_err(Error::from)?;
+        Ok(())
+    }
+
+    // POST /eth/v1/validator/{pubkey}/disable
+    pub async fn post_validators_disable(&self, pubkey: &PublicKeyBytes) -> Result<(), Error> {
+        let mut url = self.server.full.clone();
+        url.path_segments_mut()
+            .map_err(|()| Error::InvalidUrl(self.server.clone()))?
+            .push("eth")
+            .push("v1")
+            .push("validator")
+            .push(&pubkey.to_string())
+            .push("disable");
+        let _ = self
+            .client
+            .post(url)
+            .headers(self.headers()?)
+            .send()
+            .await
+            .map_err(Error::from)?;
+        Ok(())
+    }
 }
 
 /// Returns `Ok(response)` if the response is a `200 OK` response or a

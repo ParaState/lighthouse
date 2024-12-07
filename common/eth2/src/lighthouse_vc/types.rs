@@ -198,3 +198,15 @@ pub struct SingleExportKeystoresResponse {
 pub struct SetGraffitiRequest {
     pub graffiti: GraffitiString,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct KeystoreShareValidatorPostRequest {
+    pub voting_pubkey: PublicKeyBytes,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_fee_recipient: Option<Address>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graffiti: Option<GraffitiString>,
+    pub operator_id: u32,
+}

@@ -64,6 +64,12 @@ impl TOperatorCommittee for DvfOperatorCommittee {
             .flatten()
             .collect::<Vec<(u32, PublicKey, Signature)>>();
         let ids = results.iter().map(|x| x.0 as u64).collect::<Vec<u64>>();
+        if ids.len() < self.threshold {
+            return Err(DvfError::InsufficientSignatures {
+                got: ids.len(),
+                expected: self.threshold,
+            });
+        }
         let pks = results
             .iter()
             .map(|x| x.1.clone())
@@ -205,4 +211,15 @@ impl DvfOperatorCommittee {
 
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn test_collect() {
+    let array = vec![Ok(1), Err(DvfError::ShuttingDown)];
+    let futures = array.iter().map(|e| async move { e.clone() });
+    let results = join_all(futures)
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<u32>>();
 }

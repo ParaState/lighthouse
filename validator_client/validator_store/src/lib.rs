@@ -7,7 +7,7 @@ use signing_method::{Error as SigningError, SignableMessage, SigningContext, Sig
 use slashing_protection::{
     interchange::Interchange, InterchangeError, NotSafe, Safe, SlashingDatabase,
 };
-use slog::{crit, error, info, warn, Logger};
+use slog::{crit, debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -1183,9 +1183,9 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 info!(self.log, "remove validator keystore";
                 "msg" => format!("delete validator {}", validator_public_key));
             }
-            Err(_e) => {
-                error!(self.log, "remove validator keystore";
-                "error" => format!("failed to delete keystore {:?}", validator_public_key));
+            Err(e) => {
+                debug!(self.log, "remove validator keystore";
+                "error" => format!("failed to delete keystore {:?}, {:?}", validator_public_key, e));
             }
         }
     }
@@ -1229,12 +1229,9 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             )
             .await
         {
-            Ok(()) => {
-                info!(self.log, "start validator keystore";
-                "validator public key" => %validator_public_key);
-            }
+            Ok(()) => {}
             Err(e) => {
-                error!(self.log, "start validator keystore";
+                error!(self.log, "start validator keystore failed";
                 "err" => format!("{:?}", e));
             }
         }
@@ -1255,12 +1252,9 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             )
             .await
         {
-            Ok(()) => {
-                info!(self.log, "stop validator keystore";
-                "validator public key" => %validator_public_key);
-            }
+            Ok(()) => {}
             Err(e) => {
-                error!(self.log, "stop validator keystore";
+                error!(self.log, "stop validator keystore failed";
                 "err" => format!("{:?}", e));
             }
         }

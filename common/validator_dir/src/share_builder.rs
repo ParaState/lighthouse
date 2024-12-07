@@ -92,7 +92,7 @@ pub fn keystore_share_password_path<P: AsRef<Path>>(
 pub fn keystore_share_path<P: AsRef<Path>>(
     validators_dir: P,
     validator_public: &PublicKey,
-    operator_id: u32
+    operator_id: u32,
 ) -> PathBuf {
     validators_dir
         .as_ref()

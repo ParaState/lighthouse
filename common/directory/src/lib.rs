@@ -50,6 +50,7 @@ pub fn parse_path_or_default(matches: &ArgMatches, arg: &'static str) -> Result<
         arg,
         PathBuf::new()
             .join(DEFAULT_ROOT_DIR)
+            .join(format!("v{}", dvf_utils::ROOT_VERSION))
             .join(get_network_dir(matches)),
     )
 }

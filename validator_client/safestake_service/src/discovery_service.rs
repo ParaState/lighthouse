@@ -5,14 +5,16 @@ use account_utils::{
 };
 use dvf_utils::VERSION;
 use dvf_utils::{BOOT_ENRS_CONFIG_FILE, DEFAULT_BASE_PORT};
+use eth2::lighthouse_vc::http_client::ValidatorClientHttpClient;
 use lighthouse_network::discv5::{
     enr::{CombinedKey, Enr, EnrPublicKey, NodeId},
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
-use safestake_database::{SafeStakeDatabase, models::ValidatorOperation};
+use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
+use sensitive_url::SensitiveUrl;
 use slog::{error, info, Logger};
 use std::collections::HashMap;
 use std::fs::File;
@@ -22,7 +24,7 @@ use std::time::Duration;
 use task_executor::TaskExecutor;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
-
+use validator_http_api::ApiSecret;
 pub const DISCOVERY_PORT_OFFSET: u16 = 4;
 
 #[derive(Clone)]
@@ -234,56 +236,90 @@ impl DiscoveryService {
         executor: &TaskExecutor,
     ) {
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
-        executor.spawn(async move {
-            loop {
-                query_interval.tick().await;
+        executor.spawn(
+            async move {
+                let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
+                let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+                let api_pubkey = api_secret.api_token();
+                let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
+                loop {
+                    query_interval.tick().await;
 
-                let validator_public_keys = db.with_transaction(|tx| {
-                    db.query_all_validators(tx)
-                }).unwrap();
+                    let validator_public_keys = db
+                        .with_transaction(|tx| db.query_all_validators(tx))
+                        .unwrap();
 
-                for validator_public_key in &validator_public_keys {
-                    let committee_def_path = default_operator_committee_definition_path(validator_public_key, validator_dir.clone());
-                    let mut committee_def = OperatorCommitteeDefinition::from_file(&committee_def_path).unwrap();
-                    let mut restart = false;
-                    for i in 0..committee_def.total as usize {
-                        let (tx, rx) = oneshot::channel();
-                        sender.send((committee_def.node_public_keys[i].clone(), tx)).await.unwrap();
-                        if let Some(addr) = rx.await.unwrap() {
-                            if let Some(current) = committee_def.base_socket_addresses[i].as_mut() {
-                                if *current != addr {
-                                   info!(
-                                        logger,
-                                        "opertor_ip_changed";
-                                        "local" => %current,
-                                        "queried" => addr
-                                   );
-                                   *current = addr;
-                                   restart = true;
+                    for validator_public_key in &validator_public_keys {
+                        let committee_def_path = default_operator_committee_definition_path(
+                            validator_public_key,
+                            validator_dir.clone(),
+                        );
+                        let mut committee_def =
+                            OperatorCommitteeDefinition::from_file(&committee_def_path).unwrap();
+                        let mut restart = false;
+                        for i in 0..committee_def.total as usize {
+                            let (tx, rx) = oneshot::channel();
+                            sender
+                                .send((committee_def.node_public_keys[i].clone(), tx))
+                                .await
+                                .unwrap();
+                            if let Some(addr) = rx.await.unwrap() {
+                                if let Some(current) =
+                                    committee_def.base_socket_addresses[i].as_mut()
+                                {
+                                    if *current != addr {
+                                        info!(
+                                             logger,
+                                             "opertor_ip_changed";
+                                             "local" => %current,
+                                             "queried" => addr
+                                        );
+                                        *current = addr;
+                                        restart = true;
+                                    }
+                                } else {
+                                    committee_def.base_socket_addresses[i] = Some(addr);
+                                    restart = true;
                                 }
-                            } else {
-                                committee_def.base_socket_addresses[i] = Some(addr);
-                                restart = true;
+                            }
+                        }
+                        if restart {
+                            let _ = committee_def.save(committee_def_path.parent().unwrap());
+                            // restart validator
+                            match client
+                                .post_validators_disable(&validator_public_key.compress())
+                                .await
+                            {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    error!(
+                                        logger,
+                                        "failed to disable validator";
+                                        "validator public key" => %validator_public_key,
+                                        "error" => %e
+                                    )
+                                }
+                            }
+                            match client
+                                .post_validators_enable(&validator_public_key.compress())
+                                .await
+                            {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    error!(
+                                        logger,
+                                        "failed to enable validator";
+                                        "validator public key" => %validator_public_key,
+                                        "error" => %e
+                                    )
+                                }
                             }
                         }
                     }
-                    if restart {
-                        let _ = committee_def.save(committee_def_path.parent().unwrap());
-                        // restart validator
-                        if let Err(e) = db.with_transaction(|tx| {
-                            db.insert_validator_operation(tx, &validator_public_key, ValidatorOperation::Restart)
-                        }) {
-                            error!(
-                                logger,
-                                "validator operation: remove";
-                                "error" => %e
-                            );
-                        }
-                    }
-
                 }
-            }
-        }, "operator_address_monitor");
+            },
+            "operator_address_monitor",
+        );
     }
 }
 

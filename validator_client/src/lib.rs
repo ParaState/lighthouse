@@ -30,7 +30,6 @@ use safestake_operator::report::status_report;
 use safestake_service::contract_service::ContractService;
 use safestake_service::discovery_service::DiscoveryService;
 use safestake_service::operator_service::SafestakeService;
-use safestake_service::spawn_validator_operation_service;
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
@@ -591,16 +590,6 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         let store = Arc::new(
             LevelDB::<E>::open(&config.safestake_config.store_path.clone())
                 .map_err(|e| format!("{:?}", e))?,
-        );
-
-        spawn_validator_operation_service(
-            log.clone(),
-            config.safestake_config.operator_id,
-            config.validator_dir.clone(),
-            config.secrets_dir.clone(),
-            validator_store.clone(),
-            safestake_database.clone(),
-            &context.executor,
         );
 
         let operator_service = SafestakeService::new(

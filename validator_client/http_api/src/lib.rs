@@ -52,6 +52,8 @@ use validator_services::block_service::BlockService;
 use warp::{sse::Event, Filter};
 use warp_utils::task::blocking_json_task;
 
+use account_utils::{default_operator_committee_definition_path, keystore_share_password_path};
+use validator_dir::keystore_share_path;
 #[derive(Debug)]
 pub enum Error {
     Warp(warp::Error),
@@ -1180,8 +1182,8 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
     // POST /eth/v1/keystores
     let post_std_keystores = std_keystores
         .and(warp::body::json())
-        .and(validator_dir_filter)
-        .and(secrets_dir_filter)
+        .and(validator_dir_filter.clone())
+        .and(secrets_dir_filter.clone())
         .and(validator_store_filter.clone())
         .and(task_executor_filter.clone())
         .and(log_filter.clone())
@@ -1231,6 +1233,163 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
                 remotekeys::import(request, validator_store, task_executor, log)
             })
         });
+
+    // POST lighthouse/validators/keystore_share
+    let post_validators_keystore_share = warp::path("lighthouse")
+        .and(warp::path("validators"))
+        .and(warp::path("keystore_share"))
+        .and(warp::path::end())
+        .and(warp::body::json())
+        .and(validator_dir_filter.clone())
+        .and(secrets_dir_filter.clone())
+        .and(validator_store_filter.clone())
+        .and(task_executor_filter.clone())
+        .then(
+            move |body: api_types::KeystoreShareValidatorPostRequest,
+                  validator_dir: PathBuf,
+                  secrets_dir: PathBuf,
+                  validator_store: Arc<ValidatorStore<T, E>>,
+                  task_executor: TaskExecutor| {
+                blocking_json_task(move || {
+                    let validator_public_key = body.voting_pubkey.decompress().unwrap();
+                    let voting_keystore_share_path = keystore_share_path(
+                        &validator_dir,
+                        &validator_public_key,
+                        body.operator_id,
+                    );
+                    let voting_keystore_share_password_path = keystore_share_password_path(
+                        &secrets_dir,
+                        &validator_public_key,
+                        body.operator_id,
+                    );
+                    let committee_def_path = default_operator_committee_definition_path(
+                        &validator_public_key,
+                        &validator_dir,
+                    );
+                    if let Some(handle) = task_executor.handle() {
+                        handle
+                            .block_on(validator_store.add_validator_keystore_share(
+                                voting_keystore_share_path,
+                                voting_keystore_share_password_path,
+                                true,
+                                body.graffiti,
+                                body.suggested_fee_recipient,
+                                None,
+                                None,
+                                None,
+                                None,
+                                committee_def_path,
+                                body.operator_id,
+                            ))
+                            .map_err(|e| {
+                                warp_utils::reject::custom_server_error(format!(
+                                    "failed to initialize validator: {:?}",
+                                    e
+                                ))
+                            })?;
+                    } else {
+                        return Err(warp_utils::reject::custom_server_error(
+                            "Lighthouse shutting down".into(),
+                        ));
+                    };
+                    Ok(api_types::GenericResponse::from(api_types::ValidatorData {
+                        enabled: true,
+                        description: "".to_string(),
+                        voting_pubkey: body.voting_pubkey,
+                    }))
+                })
+            },
+        );
+
+    // DELETE lighthouse/validators/keystore_share
+    let delete_validators_keystore_share = warp::path("lighthouse")
+        .and(warp::path("validators"))
+        .and(warp::path("keystore_share"))
+        .and(warp::path::end())
+        .and(warp::body::json())
+        .and(validator_store_filter.clone())
+        .and(task_executor_filter.clone())
+        .then(
+            move |body: api_types::KeystoreShareValidatorPostRequest,
+                  validator_store: Arc<ValidatorStore<T, E>>,
+                  task_executor: TaskExecutor| {
+                blocking_json_task(move || {
+                    let validator_public_key = body.voting_pubkey.decompress().unwrap();
+                    if let Some(handle) = task_executor.handle() {
+                        handle.block_on(
+                            validator_store.remove_validator_keystore(&validator_public_key),
+                        );
+                    } else {
+                        return Err(warp_utils::reject::custom_server_error(
+                            "Lighthouse shutting down".into(),
+                        ));
+                    };
+                    Ok(api_types::GenericResponse::from(api_types::ValidatorData {
+                        enabled: false,
+                        description: "".to_string(),
+                        voting_pubkey: body.voting_pubkey,
+                    }))
+                })
+            },
+        );
+
+    // POST /eth/v1/validator/{pubkey}/enable
+    let post_validators_enable = eth_v1
+        .and(warp::path("validator"))
+        .and(warp::path::param::<PublicKey>())
+        .and(warp::path("enable"))
+        .and(warp::path::end())
+        .and(validator_store_filter.clone())
+        .and(task_executor_filter.clone())
+        .then(
+            |pubkey: PublicKey,
+             validator_store: Arc<ValidatorStore<T, E>>,
+             task_executor: TaskExecutor| {
+                blocking_json_task(move || {
+                    if let Some(handle) = task_executor.handle() {
+                        handle.block_on(validator_store.enable_keystore(&pubkey));
+                        Ok(api_types::GenericResponse::from(api_types::ValidatorData {
+                            enabled: true,
+                            description: "".to_string(),
+                            voting_pubkey: pubkey.compress(),
+                        }))
+                    } else {
+                        Err(warp_utils::reject::custom_server_error(
+                            "Lighthouse shutting down".into(),
+                        ))
+                    }
+                })
+            },
+        );
+
+    // POST /eth/v1/validator/{pubkey}/disable
+    let post_validators_disable = eth_v1
+        .and(warp::path("validator"))
+        .and(warp::path::param::<PublicKey>())
+        .and(warp::path("disable"))
+        .and(warp::path::end())
+        .and(validator_store_filter.clone())
+        .and(task_executor_filter.clone())
+        .then(
+            |pubkey: PublicKey,
+             validator_store: Arc<ValidatorStore<T, E>>,
+             task_executor: TaskExecutor| {
+                blocking_json_task(move || {
+                    if let Some(handle) = task_executor.handle() {
+                        handle.block_on(validator_store.disable_keystore(&pubkey));
+                        Ok(api_types::GenericResponse::from(api_types::ValidatorData {
+                            enabled: false,
+                            description: "".to_string(),
+                            voting_pubkey: pubkey.compress(),
+                        }))
+                    } else {
+                        Err(warp_utils::reject::custom_server_error(
+                            "Lighthouse shutting down".into(),
+                        ))
+                    }
+                })
+            },
+        );
 
     // DELETE /eth/v1/remotekeys
     let delete_std_remotekeys = std_remotekeys
@@ -1322,6 +1481,9 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
                         .or(post_std_keystores)
                         .or(post_std_remotekeys)
                         .or(post_graffiti)
+                        .or(post_validators_keystore_share)
+                        .or(post_validators_enable)
+                        .or(post_validators_disable)
                         .recover(warp_utils::reject::handle_rejection),
                 ))
                 .or(warp::patch()
@@ -1333,6 +1495,7 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
                         .or(delete_std_keystores)
                         .or(delete_std_remotekeys)
                         .or(delete_graffiti)
+                        .or(delete_validators_keystore_share)
                         .recover(warp_utils::reject::handle_rejection),
                 )),
         )

@@ -1,5 +1,5 @@
 use safestake_database::{models::ValidatorOperation, SafeStakeDatabase};
-use slog::{Logger, error, info};
+use slog::{Logger, error, info, debug};
 use task_executor::TaskExecutor;
 use std::path::PathBuf;
 use validator_store::ValidatorStore;
@@ -23,10 +23,11 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
     task_executor: &TaskExecutor
 ) {
     let executor = task_executor.clone();
+
     let fut = async move {
         tokio::task::spawn_blocking(move || {
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(60));
+                std::thread::sleep(std::time::Duration::from_secs(10));
                 if let Some(handle) = executor.handle() {
                     if let Some(operations) = db.with_transaction(|txn| {
                         db.handle_validator_operation(txn)
@@ -73,29 +74,21 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
                                             operator_id,
                                         )
                                     ) {
-                                        error!(
+                                        debug!(
                                             logger,
                                             "add validator keystore share";
                                             "error" => %e
                                         );
+                                        continue;
                                     }
-                                    info!(
-                                        logger,
-                                        "validator added";
-                                        "public key" => %validator_public_key
-                                    );
                                 }
                                 ValidatorOperation::Remove => {
+                                    
                                     handle.block_on(
                                         validator_store
                                         .remove_validator_keystore(
                                             &validator_public_key
                                         )
-                                    );
-                                    info!(
-                                        logger,
-                                        "validator removed";
-                                        "public key" => %validator_public_key
                                     );
                                 }
                                 ValidatorOperation::Enable => {
@@ -105,11 +98,6 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
                                             &validator_public_key
                                         )
                                     );
-                                    info!(
-                                        logger,
-                                        "validator enabled";
-                                        "public key" => %validator_public_key
-                                    );
                                 }
                                 ValidatorOperation::Disable => {
                                     handle.block_on(
@@ -117,11 +105,6 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
                                         (
                                             &validator_public_key
                                         )
-                                    );
-                                    info!(
-                                        logger,
-                                        "validator disabled";
-                                        "public key" => %validator_public_key
                                     );
                                 }
                                 ValidatorOperation::Restart => {
@@ -137,11 +120,6 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
                                             &validator_public_key
                                         )
                                     );
-                                    info!(
-                                        logger,
-                                        "validator restarted";
-                                        "public key" => %validator_public_key
-                                    );
                                 }
                                 ValidatorOperation::Unkown => {
                                     error!(
@@ -155,9 +133,9 @@ pub fn spawn_validator_operation_service<T: SlotClock + 'static, E: EthSpec>(
     
                 }
                 else {
-                    error!(
+                    info!(
                         logger,
-                        "validator operation handler error: no handler";
+                        "exexutor exit";
                     );
                 }
             }

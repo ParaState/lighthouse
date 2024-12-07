@@ -10,3 +10,4 @@ edition = { workspace = true }
 clap = { workspace = true }
 clap_utils = { workspace = true }
 eth2_network_config = { workspace = true }
+dvf_utils = { workspace = true }
