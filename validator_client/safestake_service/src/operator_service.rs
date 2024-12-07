@@ -36,7 +36,7 @@ pub struct SafestakeService<E: EthSpec> {
 
 impl<E: EthSpec> SafestakeService<E> {
     pub fn serving(base_port: u16, executor: &TaskExecutor, operator_service: SafestakeService<E>) {
-        let addr = format!("[::1]:{}", base_port).parse().unwrap();
+        let addr = format!("0.0.0.0:{}", base_port).parse().unwrap();
         executor.spawn(
             async move {
                 Server::builder()
