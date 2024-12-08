@@ -217,7 +217,8 @@ impl DiscoveryService {
                             }
                             Event::NodeInserted { .. }
                             | Event::TalkRequest(_) => {},
-                            _ => todo!() // Ignore all other discv5 server events
+                            Event::UnverifiableEnr { .. } => { },
+                            _ => {}// Ignore all other discv5 server events
                         }
                     }
                 }

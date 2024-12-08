@@ -205,7 +205,7 @@ impl ContractService {
         let network_address = config.network_contract.parse::<Address>().unwrap();
         let config_address = config.config_contract.parse::<Address>().unwrap();
         let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
-        let mut query_interval = tokio::time::interval(Duration::from_secs(3));
+        let mut query_interval = tokio::time::interval(Duration::from_secs(30));
 
         let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
