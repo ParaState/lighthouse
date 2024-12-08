@@ -759,6 +759,10 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             match slashing_status {
                 // We can safely sign this attestation.
                 Ok(Safe::Valid) => {
+                    signing_method.distributed_attest(
+                        domain_hash,
+                        attestation.data()
+                    ).await;
                     let signature = signing_method
                         .get_signature::<E, BlindedPayload<E>>(
                             SignableMessage::AttestationData(attestation.data()),
