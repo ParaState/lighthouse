@@ -353,11 +353,11 @@ impl SafeStakeDatabase {
         &self,
         txn: &Transaction,
         operator_id: u32,
-    ) -> Result<Option<SecpPublicKey>, NotSafe> {
+    ) -> Result<SecpPublicKey, NotSafe> {
         let mut stmt = txn.prepare("SELECT public_key from operators where id = ?1")?;
         Ok(stmt.query_row(params![operator_id.to_string()], |row| {
             let public_key: String = row.get(0).unwrap();
-            Ok(Some(SecpPublicKey::from_base64(&public_key).unwrap()))
+            Ok(SecpPublicKey::from_base64(&public_key).unwrap())
         })?)
     }
 }

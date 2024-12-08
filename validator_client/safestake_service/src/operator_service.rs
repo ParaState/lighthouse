@@ -111,7 +111,7 @@ impl<E: EthSpec> SafestakeService<E> {
         Ok(validator_public_key)
     }
 
-    fn check_operator_domain_hash_signature(
+    fn  check_operator_domain_hash_signature(
         &self,
         domain_hash: &Hash256,
         signature: &[u8],
@@ -125,10 +125,7 @@ impl<E: EthSpec> SafestakeService<E> {
                 self.safestake_database
                     .query_operator_public_key(tx, operator_id)
             })
-            .map_err(|e| Status::internal(format!("failed to find operator's public key {:?}", e)))?
-            .ok_or(Status::internal(format!(
-                "failed to find operator's public key"
-            )))?;
+            .map_err(|e| Status::internal(format!("failed to find operator's public key {:?}", e)))?;
 
         signature
             .verify(&Digest(domain_hash.0), &operator_public_key)

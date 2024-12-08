@@ -40,6 +40,10 @@ sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
     contract SafeStakeRegistry {
+        struct Counter {
+            uint256 _value; // default: 0
+        }
+           
         struct Operator {
             string name;
             bytes publicKey;
@@ -51,6 +55,7 @@ sol!(
             bool verified;
         }
         mapping(uint32 => Operator) public _operators;
+        Counter public _lastOperatorId;  
     }
 );
 
@@ -167,11 +172,41 @@ impl ContractService {
             .await
             .map_err(|e| e.to_string())?;
 
-        // if config.node_secret.name.0 != _1.as_ref() {
-        //     return Err(format!("operator id {} and its public key are not consistent with smart contract! Please make sure operator id is right", config.operator_id));
-        // }
+        if config.node_secret.name.0 != _1.as_ref() {
+            return Err(format!("operator id {} and its public key are not consistent with smart contract! Please make sure operator id is right", config.operator_id));
+        }
 
         Ok(())
+    }
+
+    pub async fn query_all_operators(config: &Config, db: &SafeStakeDatabase) -> Result<(), String> {
+        let provider: P = ProviderBuilder::new().on_http(
+            config
+                .rpc_url
+                .parse::<reqwest::Url>()
+                .map_err(|e| e.to_string())?,
+        );
+        let registry_contract = SafeStakeRegistryContract::new(
+            config
+                .registry_contract
+                .parse::<Address>()
+                .map_err(|e| e.to_string())?,
+            provider.clone(),
+        );
+        let SafeStakeRegistry::_lastOperatorIdReturn { _0 } = registry_contract
+            ._lastOperatorId()
+            .call()
+            .await
+            .map_err(|e| e.to_string()).unwrap();
+        let last_id: u64 = _0.try_into().unwrap();
+        for i in 1..last_id + 1 {
+            let op = registry_contract.query_operator(i as u32).await?;
+            db.with_transaction(|t| db.insert_operator(t, &op))
+                .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
+        }
+
+        Ok(())
+
     }
 
     pub async fn spawn_pull_logs<T: SlotClock + 'static, E: EthSpec>(
@@ -463,6 +498,10 @@ async fn handle_validator_registration(
         );
         let mut operator_public_keys = vec![];
         for operator_id in &operator_ids {
+            if let Ok(_) = db.with_transaction(|t| db.query_operator_public_key(t, *operator_id)) {
+                continue;
+            }
+
             let operator = registry_contract.query_operator(*operator_id).await?;
             db.with_transaction(|t| db.insert_operator(t, &operator))
                 .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
@@ -847,4 +886,30 @@ async fn test_rpc_parse() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn test_rpc_operator_id() {
+    use alloy_primitives::address;
+    use alloy_rpc_types::BlockId;
+    use alloy_rpc_types::BlockNumberOrTag;
+    use alloy_rpc_types::BlockTransactionsKind;
+    use safestake_crypto::secret::{Export, Secret};
+    let rpc_url = "https://ethereum-holesky-rpc.publicnode.com"
+        .parse::<reqwest::Url>()
+        .unwrap();
+    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
+    let registry_contract = SafeStakeRegistryContract::new(
+        registry_address,
+        provider.clone(),
+    );
+
+    let SafeStakeRegistry::_lastOperatorIdReturn { _0 } = registry_contract
+            ._lastOperatorId()
+            .call()
+            .await
+            .map_err(|e| e.to_string()).unwrap();
+    let last_id: u64 = _0.try_into().unwrap();
+    println!("{:?}", last_id )
 }

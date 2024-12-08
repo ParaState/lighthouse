@@ -566,7 +566,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         );
 
         ContractService::check_operator(&config.safestake_config).await?;
-
+        ContractService::query_all_operators(&config.safestake_config, &safestake_database).await?;
         ContractService::spawn_pull_logs(
             log.clone(),
             config.safestake_config.clone(),

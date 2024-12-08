@@ -673,10 +673,6 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                             &self.task_executor,
                         )
                         .await?;
-                    validator_metrics::inc_counter_vec(
-                        &validator_metrics::SIGNED_BLOCKS_TOTAL,
-                        &[validator_metrics::SUCCESS],
-                    );
                     Ok(SignedBeaconBlock::from_block(block, signature))
                 }
                 Ok(Safe::SameData) => {
