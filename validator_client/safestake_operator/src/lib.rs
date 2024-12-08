@@ -324,3 +324,23 @@ async fn test_liveness() {
 
     println!("{:?}, ", client.check_liveness(request).await.unwrap());
 }
+
+#[tokio::test]
+async fn test_signature() {
+    use std::net::{Ipv4Addr, IpAddr};
+    let store = 
+        LevelDB::<E>::open("/tmp/test_store")
+            .map_err(|e| format!("{:?}", e)).unwrap();
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(54, 151, 182, 45)), 26000);
+    let addr_str = format!("http://{}", addr.to_string());
+
+    let mut client = SafestakeClient::connect(addr_str).await.unwrap();
+    let msg = hex::decode("bd24bfc977895f0dd46b621647ee8fe81d2d5e33a93193adfe2657d25c70a4e7").unwrap();
+    let request = tonic::Request::new(GetSignatureRequest {
+        version: VERSION,
+        msg,
+        validator_public_key: hex::decode("8eab0a0199aec731560ee05a29d051a1858b93049069aa4a18774cd976b373550104fb5c55ffba3d0fb69b8c16fca8d2").unwrap(),
+    });
+    println!("{:?}, ", client.get_signature(request).await.unwrap());
+
+}

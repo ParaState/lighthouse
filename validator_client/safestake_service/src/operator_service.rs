@@ -66,7 +66,7 @@ impl<E: EthSpec> SafestakeService<E> {
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
         let api_pubkey = api_secret.api_token();
         let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
-
+        let log = logger.clone();
         let safestake_service = Self {
             logger,
             secret,
@@ -78,6 +78,7 @@ impl<E: EthSpec> SafestakeService<E> {
         let store_fut = async move {
             loop {
                 if let Some((msg, signature, validator_public_key)) = rx.recv().await {
+                    info!(log, "local sign"; "signing root" => %hex::encode(msg));
                     let _ = store.put_bytes(
                         &validator_public_key.as_hex_string(),
                         &msg.0,
@@ -233,7 +234,7 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             .await?;
         let signature = self
             .store
-            .get_bytes(&hex::encode(&req.validator_public_key), &req.msg)
+            .get_bytes(&format!("0x{}", hex::encode(&req.validator_public_key)), &req.msg)
             .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
         if let Some(signature) = signature {
             Ok(Response::new(GetSignatureResponse { signature }))
