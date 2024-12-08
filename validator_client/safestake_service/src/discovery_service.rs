@@ -235,6 +235,7 @@ impl DiscoveryService {
         db: SafeStakeDatabase,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         executor: &TaskExecutor,
+        self_operator_id: u32, 
     ) {
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
         executor.spawn(
@@ -259,6 +260,9 @@ impl DiscoveryService {
                             OperatorCommitteeDefinition::from_file(&committee_def_path).unwrap();
                         let mut restart = false;
                         for i in 0..committee_def.total as usize {
+                            if committee_def.operator_ids[i] == self_operator_id {
+                                continue;
+                            }
                             let (tx, rx) = oneshot::channel();
                             sender
                                 .send((committee_def.node_public_keys[i].clone(), tx))
@@ -346,4 +350,34 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
             db.upsert_operator_socket_address(tx, &public_key, &socket_address, enr.seq())
         });
     }
+}
+
+#[tokio::test]
+async fn test_query_boot() {
+    use base64::prelude::*;
+    let request = tonic::Request::new(QueryNodeAddressRequest {
+        version: VERSION,
+        operator_public_key: BASE64_STANDARD.decode("A5DTEz2MFETa1ZJpuQ0ZeLLnMy7Bp92kLak+ORWtyNZV").unwrap(),
+    });
+    let mut client = BootnodeClient::connect(format!("http://18.141.189.105:9005")).await.unwrap();
+    match client.query_node_address(request).await {
+        Ok(response) => {
+            let res = response.into_inner();
+            let addr = bincode::deserialize::<SocketAddr>(&res.address).unwrap();
+            
+            println!("{:?}", addr);
+        },
+        Err(e) => {
+            panic!("{}", e);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_parse_enr() { 
+    use base64::prelude::*;
+    let enr = "enr:-IS4QCQaienDvEyWvFY9-wkj55spRowzzp-so55JRefrrTAeAbQ3Lr7fl9_k5ScRQBxeozZ1qZRLJkQpZGOLLNd3q6QBgmlkgnY0gmlwhBKNvWmJc2VjcDI1NmsxoQL4ns4R7bHwiMB7LId7Kc7KCbScmVhDxcROOxpUHVnz8oN1ZHCCIy0";
+
+    let boot_enrs: Enr<CombinedKey> = serde_yaml::from_str(enr).unwrap();
+    println!("{:?} {:?} {:?} ",boot_enrs.ip4(), boot_enrs.tcp4(), BASE64_STANDARD.encode(boot_enrs.public_key().encode()));
 }

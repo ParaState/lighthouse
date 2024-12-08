@@ -562,6 +562,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             safestake_database.clone(),
             sender.clone(),
             &context.executor,
+            config.safestake_config.operator_id
         );
 
         ContractService::check_operator(&config.safestake_config).await?;

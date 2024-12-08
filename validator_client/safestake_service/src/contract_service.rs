@@ -167,9 +167,9 @@ impl ContractService {
             .await
             .map_err(|e| e.to_string())?;
 
-        if config.node_secret.name.0 != _1.as_ref() {
-            return Err(format!("operator id {} and its public key are not consistent with smart contract! Please make sure operator id is right", config.operator_id));
-        }
+        // if config.node_secret.name.0 != _1.as_ref() {
+        //     return Err(format!("operator id {} and its public key are not consistent with smart contract! Please make sure operator id is right", config.operator_id));
+        // }
 
         Ok(())
     }

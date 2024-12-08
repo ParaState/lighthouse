@@ -311,7 +311,7 @@ pub async fn test_rpc_client() {
 #[tokio::test]
 async fn test_liveness() {
     use std::net::{Ipv4Addr, IpAddr};
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(54, 151, 182, 45)), 26000);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(13, 215, 100, 234)), 26000);
     let addr_str = format!("http://{}", addr.to_string());
 
     let mut client = SafestakeClient::connect(addr_str).await.unwrap();
