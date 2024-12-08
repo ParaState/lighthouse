@@ -286,7 +286,7 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
                 let serialized_signature = bincode::serialize(&sig).unwrap();
                 self.store
                     .put_bytes(
-                        &hex::encode(&req.validator_public_key),
+                        &format!("0x{}", hex::encode(req.validator_public_key)),
                         &signing_root.0,
                         &serialized_signature,
                     )
