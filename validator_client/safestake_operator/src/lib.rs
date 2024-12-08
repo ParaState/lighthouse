@@ -334,15 +334,15 @@ async fn test_signature() {
     let store = 
         LevelDB::<MainnetEthSpec>::open(Path::new("/tmp/test_store"))
             .map_err(|e| format!("{:?}", e)).unwrap();
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(3, 1, 157, 181)), 26000);
-    let addr_str = format!("http://{}", addr.to_string());
-
+    let testleaon = "18.143.137.23";
+    let addr_str = format!("http://{}:26000", testleaon);
+    
     let mut client = SafestakeClient::connect(addr_str).await.unwrap();
-    let msg = hex::decode("969da6670ff378498cf23ae03ba2712baa1b99316b18a50249e8c25adf626f4c").unwrap();
+    let msg = hex::decode("b60913bd42c14342ac7af9a5e7e69a50184086d25410a6fc9d57773152b03486").unwrap();
     let request = tonic::Request::new(GetSignatureRequest {
         version: VERSION,
         msg,
-        validator_public_key: hex::decode("a37583ecbf099f5baf30d7a18dc892ccb779bdf640ee92fae3cd5e855ed7351ac6fff1e9870331de4e2536ae801b7bb2").unwrap(),
+        validator_public_key: hex::decode("857c755885305bcb010114eed5c93fafd6c7afba9c2132849aadf0bb821916c3f06f160674dd6f9d3ace0a486b08ad09").unwrap(),
     });
     let resp = client.get_signature(request).await.unwrap();
     Signature::deserialize(&resp.into_inner().signature).unwrap();

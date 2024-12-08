@@ -176,7 +176,7 @@ impl<E: EthSpec> SafestakeService<E> {
                         "signing root" => format!("{:?}", signing_root)
                     );
                     let sig = self.sign_msg(&validator_public_key, signing_root).await?;
-                    let serialized_signature = bincode::serialize(&sig).unwrap();
+                    let serialized_signature = sig.serialize();
 
                     self.store
                         .put_bytes(
@@ -283,7 +283,7 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
                 let signing_root = signable_msg.signing_root(domain_hash);
                 info!(self.logger, "opeartor service attestation"; "signing root" => %signing_root);
                 let sig = self.sign_msg(&validator_public_key, signing_root).await?;
-                let serialized_signature = bincode::serialize(&sig).unwrap();
+                let serialized_signature = sig.serialize();
                 self.store
                     .put_bytes(
                         &format!("0x{}", hex::encode(req.validator_public_key)),
