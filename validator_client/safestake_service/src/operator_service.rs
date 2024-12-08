@@ -1,5 +1,5 @@
 use dvf_utils::VERSION;
-use parking_lot::RwLock;
+use eth2::lighthouse_vc::http_client::ValidatorClientHttpClient;
 use safestake_crypto::secp::{Digest, Signature};
 use safestake_crypto::secret::Secret;
 use safestake_database::SafeStakeDatabase;
@@ -10,10 +10,11 @@ use safestake_operator::proto::{
     GetSignatureRequest, GetSignatureResponse, ProposeBlindedBlockRequest,
     ProposeBlindedBlockResponse, ProposeFullBlockRequest, ProposeFullBlockResponse,
 };
+use sensitive_url::SensitiveUrl;
 use signing_method::SignableMessage;
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slog::{error, info, Logger};
-use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use store::{KeyValueStore, LevelDB};
 use task_executor::TaskExecutor;
@@ -24,14 +25,16 @@ use types::{
     AbstractExecPayload, AttestationData, BeaconBlock, BlindedPayload, EthSpec, ExecPayload,
     FullPayload, Hash256,
 };
-use types::{Keypair, PublicKey, Signature as BlsSignature};
+use types::{PublicKey, Signature as BlsSignature};
+use validator_http_api::ApiSecret;
+
 pub struct SafestakeService<E: EthSpec> {
     logger: Logger,
     secret: Secret,
     store: Arc<LevelDB<E>>,
     slashing_database: SlashingDatabase,
     safestake_database: SafeStakeDatabase,
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+    validator_client: ValidatorClientHttpClient,
 }
 
 impl<E: EthSpec> SafestakeService<E> {
@@ -55,17 +58,22 @@ impl<E: EthSpec> SafestakeService<E> {
         store: Arc<LevelDB<E>>,
         slashing_database: SlashingDatabase,
         safestake_database: SafeStakeDatabase,
-        keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
+        validator_dir: &PathBuf,
         mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>,
         executor: &TaskExecutor,
     ) -> Self {
+        let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
+        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+        let api_pubkey = api_secret.api_token();
+        let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
+
         let safestake_service = Self {
             logger,
             secret,
             store: store.clone(),
             slashing_database,
             safestake_database: safestake_database.clone(),
-            keypairs,
+            validator_client: client,
         };
         let store_fut = async move {
             loop {
@@ -93,18 +101,13 @@ impl<E: EthSpec> SafestakeService<E> {
                 VERSION, version
             )));
         }
+
         let validator_public_key = PublicKey::deserialize(validator_public_key).map_err(|e| {
             Status::internal(format!(
                 "failed to deserialize validator public key {:?}",
                 e
             ))
         })?;
-        if !self.keypairs.read().contains_key(&validator_public_key) {
-            return Err(Status::internal(format!(
-                "unkown validators {}",
-                validator_public_key
-            )));
-        }
         Ok(validator_public_key)
     }
 
@@ -134,6 +137,26 @@ impl<E: EthSpec> SafestakeService<E> {
         Ok(())
     }
 
+    async fn sign_msg(
+        &self,
+        validator_public_key: &PublicKey,
+        msg: Hash256,
+    ) -> Result<BlsSignature, Status> {
+        self.validator_client
+            .post_keypair_sign(&validator_public_key.compress(), msg)
+            .await
+            .map_err(|_| {
+                Status::internal(format!(
+                    "unkown validator public key {}",
+                    validator_public_key
+                ))
+            })?
+            .ok_or(Status::internal(format!(
+                "unkown validator public key {}",
+                validator_public_key
+            )))
+    }
+
     async fn sign_block<Payload: AbstractExecPayload<E>>(
         &self,
         block: BeaconBlock<E, Payload>,
@@ -154,16 +177,7 @@ impl<E: EthSpec> SafestakeService<E> {
                         "safestake operator sign block";
                         "signing root" => format!("{:?}", signing_root)
                     );
-                    let keypairs = self.keypairs.read();
-                    let keypair =
-                        keypairs
-                            .get(validator_public_key)
-                            .ok_or(Status::internal(format!(
-                                "unkown validator public key {}",
-                                validator_public_key
-                            )))?;
-
-                    let sig = keypair.sk.sign(signing_root);
+                    let sig = self.sign_msg(&validator_public_key, signing_root).await?;
                     let serialized_signature = bincode::serialize(&sig).unwrap();
 
                     self.store
@@ -270,15 +284,7 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
                     SignableMessage::<E, BlindedPayload<E>>::AttestationData(&attestation_data);
                 let signing_root = signable_msg.signing_root(domain_hash);
                 info!(self.logger, "opeartor service attestation"; "signing root" => %signing_root);
-                let keypairs = self.keypairs.read();
-                let keypair =
-                    keypairs
-                        .get(&validator_public_key)
-                        .ok_or(Status::internal(format!(
-                            "unkown validator public key {}",
-                            validator_public_key
-                        )))?;
-                let sig = keypair.sk.sign(signing_root);
+                let sig = self.sign_msg(&validator_public_key, signing_root).await?;
                 let serialized_signature = bincode::serialize(&sig).unwrap();
                 self.store
                     .put_bytes(

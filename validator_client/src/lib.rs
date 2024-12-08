@@ -33,7 +33,6 @@ use safestake_service::operator_service::SafestakeService;
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -567,14 +566,12 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
 
         ContractService::check_operator(&config.safestake_config).await?;
 
-        let keypairs = Arc::new(RwLock::new(HashMap::new()));
         ContractService::spawn_pull_logs(
             log.clone(),
             config.safestake_config.clone(),
             validator_store.clone(),
             safestake_database.clone(),
             &context.executor,
-            keypairs.clone(),
             sender,
         )
         .await;
@@ -598,7 +595,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             store,
             slashing_protection.clone(),
             safestake_database,
-            keypairs,
+            &config.validator_dir,
             recv,
             &context.executor,
         );

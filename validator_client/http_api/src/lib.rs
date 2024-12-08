@@ -1391,6 +1391,31 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
             },
         );
 
+    // POST /eth/v1/validator/{pubkey}/sign
+    let post_keypair_sign = eth_v1
+        .and(warp::path("validator"))
+        .and(warp::path::param::<PublicKey>())
+        .and(warp::path("sign"))
+        .and(warp::body::json())
+        .and(warp::path::end())
+        .and(validator_store_filter.clone())
+        .then(
+            |validator_pubkey: PublicKey,
+             request: api_types::KeypairShareSignRequest,
+             validator_store: Arc<ValidatorStore<T, E>>| {
+                blocking_json_task(move || {
+                    let signature = validator_store
+                        .initialized_validators()
+                        .read()
+                        .sign_msg(&validator_pubkey.compress(), request.msg);
+                    Ok(api_types::GenericResponse::from(api_types::KeypairShareSignResponse {
+                        signature
+                    }))
+                })
+            },
+        )
+        .map(|reply| warp::reply::with_status(reply, warp::http::StatusCode::ACCEPTED));
+
     // DELETE /eth/v1/remotekeys
     let delete_std_remotekeys = std_remotekeys
         .and(warp::body::json())
@@ -1484,6 +1509,7 @@ pub fn serve<T: 'static + SlotClock + Clone, E: EthSpec>(
                         .or(post_validators_keystore_share)
                         .or(post_validators_enable)
                         .or(post_validators_disable)
+                        .or(post_keypair_sign)
                         .recover(warp_utils::reject::handle_rejection),
                 ))
                 .or(warp::patch()

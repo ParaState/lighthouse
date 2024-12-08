@@ -210,3 +210,13 @@ pub struct KeystoreShareValidatorPostRequest {
     pub graffiti: Option<GraffitiString>,
     pub operator_id: u32,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct KeypairShareSignRequest {
+    pub msg: Hash256,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct KeypairShareSignResponse {
+    pub signature: Option<Signature>,
+}

@@ -170,7 +170,7 @@ impl DvfOperatorCommittee {
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
-                channel: Endpoint::from_shared(addr.to_string())
+                channel: Endpoint::from_shared(format!("http://{}", addr.to_string()))
                     .unwrap()
                     .connect_lazy(),
             };

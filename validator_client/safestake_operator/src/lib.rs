@@ -307,3 +307,20 @@ pub async fn test_rpc_client() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_liveness() {
+    use std::net::{Ipv4Addr, IpAddr};
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(54, 151, 182, 45)), 26000);
+    let addr_str = format!("http://{}", addr.to_string());
+
+    let mut client = SafestakeClient::connect(addr_str).await.unwrap();
+    let random_hash = Hash256::random();
+    let request = tonic::Request::new(CheckLivenessRequest {
+        version: VERSION,
+        msg: random_hash.0.to_vec(),
+        validator_public_key: hex::decode("a75658657efffaab8c2f9d36f95d04d91df370ff44c1b936769702c1b38907d992a8b7a7dfe587fc4510ce7b7e92be48").unwrap(),
+    });
+
+    println!("{:?}, ", client.check_liveness(request).await.unwrap());
+}

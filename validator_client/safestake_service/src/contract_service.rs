@@ -12,7 +12,6 @@ use eth2::lighthouse_vc::{
 };
 use eth2_keystore::KeystoreBuilder;
 use eth2_keystore_share::KeystoreShare;
-use parking_lot::RwLock;
 use safestake_crypto::elgamal::{Ciphertext, Elgamal};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
 use safestake_database::models::{Operator, Validator};
@@ -26,7 +25,7 @@ use std::fs::{remove_dir_all, remove_file, File};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -181,7 +180,6 @@ impl ContractService {
         validator_store: Arc<ValidatorStore<T, E>>,
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
-        keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     ) {
         let provider: P =
@@ -252,7 +250,6 @@ impl ContractService {
                                             &config,
                                             validator_store.clone(),
                                             &db,
-                                            keypairs.clone(),
                                             &sender,
                                             &client,
                                         )
@@ -392,7 +389,6 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     config: &Config,
     validator_store: Arc<ValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
@@ -404,14 +400,13 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
                 block_timestamp,
                 config,
                 db,
-                keypairs,
                 sender,
                 client,
             )
             .await?;
         }
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
-            handle_validator_removal(log, logger, config, db, keypairs, client).await?;
+            handle_validator_removal(log, logger, config, db, client).await?;
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
             handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
@@ -427,7 +422,6 @@ async fn handle_validator_registration(
     block_timestamp: u64,
     config: &Config,
     db: &SafeStakeDatabase,
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
@@ -581,7 +575,6 @@ async fn handle_validator_registration(
         };
         db.with_transaction(|t| db.insert_validator(t, &validator))
             .map_err(|e| format!("failed to insert validator {}", e.to_string()))?;
-        keypairs.write().insert(validator_public_key, key_pair);
     }
     Ok(())
 }
@@ -591,7 +584,6 @@ async fn handle_validator_removal(
     logger: &Logger,
     config: &Config,
     db: &SafeStakeDatabase,
-    keypairs: Arc<RwLock<HashMap<PublicKey, Keypair>>>,
     client: &ValidatorClientHttpClient,
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRemoval { _0, _1 } =
@@ -601,7 +593,7 @@ async fn handle_validator_removal(
         format!("{:?}", e)
     })?;
 
-    if keypairs.read().get(&validator_public_key).is_none() {
+    if let Err(_) = client.get_graffiti(&validator_public_key.compress()).await {
         return Ok(());
     }
 
@@ -642,8 +634,6 @@ async fn handle_validator_removal(
     let _ = db
         .with_transaction(|t| db.delete_validator(t, &validator_public_key))
         .map_err(|e| format!("failed to delete validator {}", e.to_string()));
-
-    keypairs.write().remove(&validator_public_key);
     info!(
         logger,
         "validator removal";

@@ -1713,4 +1713,19 @@ impl InitializedValidators {
     pub fn as_mut_slice_testing_only(&mut self) -> &mut [ValidatorDefinition] {
         self.definitions.as_mut_slice()
     }
+
+    /// Sign a given msg
+    pub fn sign_msg(&self, voting_public_key: &PublicKeyBytes, msg: Hash256) -> Option<Signature>{
+        self.validators
+            .get(voting_public_key)
+            .map(|v| {
+                match v.signing_method.as_ref() {
+                    SigningMethod::LocalKeystore { .. } => None,
+                    SigningMethod::Web3Signer { .. } => None,
+                    SigningMethod::DistributedKeystore { keypair, .. } => {
+                        Some(keypair.sk.sign(msg))
+                    }
+                }
+            })?
+    }
 }

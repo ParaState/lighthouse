@@ -752,6 +752,21 @@ impl ValidatorClientHttpClient {
             .map_err(Error::from)?;
         Ok(())
     }
+
+    // POST /eth/v1/validator/{pubkey}/sign
+    pub async fn post_keypair_sign(&self, pubkey: &PublicKeyBytes, msg: Hash256) -> Result<Option<Signature>, Error> {
+        let mut url = self.server.full.clone();
+        url.path_segments_mut()
+            .map_err(|()| Error::InvalidUrl(self.server.clone()))?
+            .push("eth")
+            .push("v1")
+            .push("validator")
+            .push(&pubkey.to_string())
+            .push("sign");
+        let request = KeypairShareSignRequest { msg };
+        let response: GenericResponse<KeypairShareSignResponse> = self.post(url, &request).await?;
+        Ok(response.data.signature)
+    }
 }
 
 /// Returns `Ok(response)` if the response is a `200 OK` response or a
