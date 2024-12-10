@@ -82,6 +82,7 @@ sol!(
     #[sol(rpc)]
     contract SafeStakeConfig {
         event FeeRecipientAddressChanged(address,address);
+        function getFeeRecipientAddress(address owner) public view returns (address);
     }
 );
 
@@ -89,7 +90,7 @@ type T = Http<Client>;
 type P = RootProvider<T>;
 type SafeStakeRegistryContract = SafeStakeRegistry::SafeStakeRegistryInstance<T, P>;
 type SafeStakeNetworkContract = SafeStakeNetwork::SafeStakeNetworkInstance<T, P>;
-
+type SafeStakeConfigContract = SafeStakeConfig::SafeStakeConfigInstance<T, P>;
 const VALIDATOR_REGISTRATION_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeNetwork::ValidatorRegistration::SIGNATURE_HASH;
 const VALIDATOR_REMOVAL_TOPIC: alloy_primitives::FixedBytes<32> =
@@ -115,6 +116,13 @@ impl SafeStakeRegistryContract {
             public_key: SecpPublicKey(public_key_slice),
         };
         Ok(operator)
+    }
+}
+
+impl SafeStakeConfigContract {
+    async fn query_owner_fee_recipient(&self, owner: Address) -> Result<Address, String> {
+        let SafeStakeConfig::getFeeRecipientAddressReturn { _0 } = self.getFeeRecipientAddress(owner).call().await.map_err(|e| e.to_string())?;
+        Ok(_0)
     }
 }
 
@@ -486,6 +494,12 @@ async fn handle_validator_registration(
             .map_err(|e| e.to_string())?,
         provider.clone(),
     );
+    let config_contract = SafeStakeConfigContract::new(
+        config.config_contract.parse::<Address>()
+        .map_err(|e| e.to_string())?,
+        provider.clone(),
+    );
+
     let secret = config.node_secret.clone();
 
     if operator_ids.contains(&self_operator_id) {
@@ -498,10 +512,6 @@ async fn handle_validator_registration(
         );
         let mut operator_public_keys = vec![];
         for operator_id in &operator_ids {
-            if let Ok(_) = db.with_transaction(|t| db.query_operator_public_key(t, *operator_id)) {
-                continue;
-            }
-
             let operator = registry_contract.query_operator(*operator_id).await?;
             db.with_transaction(|t| db.insert_operator(t, &operator))
                 .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
@@ -581,10 +591,11 @@ async fn handle_validator_registration(
         );
         def.to_file(committee_def_path.clone())
             .map_err(|e| format!("failed to save committee definition: {:?}", e))?;
-        let fee_recipient = match db.with_transaction(|t| db.query_owner_fee_recipient(t, &owner)) {
-            Ok(a) => a,
-            Err(_) => owner,
-        };
+    
+        let fee_recipient = config_contract.query_owner_fee_recipient(owner).await?;
+        let _ = db.with_transaction(|t| {
+            db.upsert_owner_fee_recipient(t, owner.clone(), fee_recipient.clone())
+        });
 
         match client
             .post_validators_keystore_share(&KeystoreShareValidatorPostRequest {
@@ -697,7 +708,7 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
             db.upsert_owner_fee_recipient(t, owner.clone(), fee_recipient.clone())?;
             db.query_validator_public_keys_by_owner(t, owner)
         })
-        .map_err(|e| format!("failed to delete validator {}", e.to_string()))?;
+        .map_err(|e| format!("failed to query validator by owner{}", e.to_string()))?;
 
     for validator_public_key in validator_public_keys {
         validator_store.set_validator_fee_recipient(
@@ -900,10 +911,18 @@ async fn test_rpc_operator_id() {
         .unwrap();
     let provider: P = ProviderBuilder::new().on_http(rpc_url);
     let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
+    let config_address = address!("1EFB8c90381695584CcB117388Bba897b71e0635");
     let registry_contract = SafeStakeRegistryContract::new(
         registry_address,
         provider.clone(),
     );
+
+    let config_contract = SafeStakeConfigContract::new(
+        config_address,
+        provider.clone(),
+    );
+
+    println!("{}", config_contract.query_owner_fee_recipient(address!("05CCfDa9CB171b0Ec4E2290B0a82B1619fD4B5b4")).await.unwrap());
 
     let SafeStakeRegistry::_lastOperatorIdReturn { _0 } = registry_contract
             ._lastOperatorId()
