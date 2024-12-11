@@ -1,12 +1,14 @@
 use crate::config::Config;
 use account_utils::default_operator_committee_definition_path;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
+use account_utils::validator_definitions::ValidatorDefinitions;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactionsKind, Filter, Log};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolEvent;
 use alloy_transport_http::{Client, Http};
+use bls::FixedBytesExtended;
 use eth2::lighthouse_vc::{
     http_client::ValidatorClientHttpClient, types::KeystoreShareValidatorPostRequest,
 };
@@ -32,10 +34,12 @@ use tokio::sync::oneshot;
 use types::Address as H160;
 use types::EthSpec;
 use types::{Keypair, PublicKey, SecretKey};
+use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
 use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
+
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -54,6 +58,13 @@ sol!(
             bool fromParaStateDao;
             bool verified;
         }
+        struct Validator {
+            address ownerAddress;       // one address may have many validators, this validator's index in _owners.validators
+            uint32[] operatorIds;       // releated operators ids
+            uint32 indexInOwner;
+            bytes publicKey;            // public key
+        }
+        mapping(bytes => Validator) public _validators;
         mapping(uint32 => Operator) public _operators;
         Counter public _lastOperatorId;  
     }
@@ -117,6 +128,11 @@ impl SafeStakeRegistryContract {
         };
         Ok(operator)
     }
+
+    async fn query_validator_owner(&self, validator_public_key: &PublicKey) -> Result<Address, String> {
+        let SafeStakeRegistry::_validatorsReturn { _0, .. } = self._validators(Bytes::copy_from_slice(&validator_public_key.serialize())).call().await.map_err(|e| e.to_string())?;
+        Ok(_0)
+    }
 }
 
 impl SafeStakeConfigContract {
@@ -158,7 +174,7 @@ impl BlockRecord {
 pub struct ContractService {}
 
 impl ContractService {
-    pub async fn check_operator(config: &Config) -> Result<(), String> {
+    pub async fn preparation(config: &Config, db: &SafeStakeDatabase) -> Result<(), String> {
         let provider: P = ProviderBuilder::new().on_http(
             config
                 .rpc_url
@@ -173,8 +189,8 @@ impl ContractService {
                 .map_err(|e| e.to_string())?,
             provider.clone(),
         );
-
-        let SafeStakeRegistry::_operatorsReturn { _0, _1, _2, .. } = registry_contract
+        // check operator id and public key
+        let SafeStakeRegistry::_operatorsReturn { _1, .. } = registry_contract
             ._operators(config.operator_id as u32)
             .call()
             .await
@@ -184,23 +200,7 @@ impl ContractService {
             return Err(format!("operator id {} and its public key are not consistent with smart contract! Please make sure operator id is right", config.operator_id));
         }
 
-        Ok(())
-    }
-
-    pub async fn query_all_operators(config: &Config, db: &SafeStakeDatabase) -> Result<(), String> {
-        let provider: P = ProviderBuilder::new().on_http(
-            config
-                .rpc_url
-                .parse::<reqwest::Url>()
-                .map_err(|e| e.to_string())?,
-        );
-        let registry_contract = SafeStakeRegistryContract::new(
-            config
-                .registry_contract
-                .parse::<Address>()
-                .map_err(|e| e.to_string())?,
-            provider.clone(),
-        );
+        // query_all_operators
         let SafeStakeRegistry::_lastOperatorIdReturn { _0 } = registry_contract
             ._lastOperatorId()
             .call()
@@ -213,8 +213,51 @@ impl ContractService {
                 .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
         }
 
-        Ok(())
 
+        Ok(())
+    }
+
+    pub async fn set_validators_fee_recipient(config: &Config, db: &SafeStakeDatabase, validator_defs: &mut ValidatorDefinitions) -> Result<(), String> {
+        let provider: P = ProviderBuilder::new().on_http(
+            config
+                .rpc_url
+                .parse::<reqwest::Url>()
+                .map_err(|e| e.to_string())?,
+        );
+        let registry_contract = SafeStakeRegistryContract::new(
+            config
+                .registry_contract
+                .parse::<Address>()
+                .map_err(|e| e.to_string())?,
+            provider.clone(),
+        );
+
+        let config_contract = SafeStakeConfigContract::new(
+            config.config_contract.parse::<Address>()
+            .map_err(|e| e.to_string())?,
+            provider.clone(),
+        );
+        let mut owner_fee_recipients: HashMap<Address, Address> = HashMap::new();
+        for def in validator_defs.as_mut_slice() {
+            let owner = registry_contract.query_validator_owner(&def.voting_public_key).await?;
+            if !owner_fee_recipients.contains_key(&owner) {
+                let fee_recipient = config_contract.query_owner_fee_recipient(owner).await?;
+                if fee_recipient == Address::zero() {
+                    owner_fee_recipients.insert(owner, owner);
+                } else {
+                    owner_fee_recipients.insert(owner, fee_recipient);
+                }
+            }
+            def.suggested_fee_recipient = Some(owner_fee_recipients.get(&owner).unwrap().clone());
+        }
+        owner_fee_recipients.iter().for_each(|(o, f)| {
+            let _ = db.with_transaction(|tx| {
+                db.upsert_owner_fee_recipient(tx, *o, *f)
+            });
+        });
+        validator_defs.save(&config.validator_dir).map_err(|e| format!("{:?}", e))?;
+
+        Ok(())
     }
 
     pub async fn spawn_pull_logs<T: SlotClock + 'static, E: EthSpec>(
@@ -246,7 +289,7 @@ impl ContractService {
         let network_address = config.network_contract.parse::<Address>().unwrap();
         let config_address = config.config_contract.parse::<Address>().unwrap();
         let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
-        let mut query_interval = tokio::time::interval(Duration::from_secs(30));
+        let mut query_interval = tokio::time::interval(Duration::from_secs(3));
 
         let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
@@ -642,10 +685,6 @@ async fn handle_validator_removal(
         error!(logger, "failed to deserialize shared public key");
         format!("{:?}", e)
     })?;
-
-    if let Err(_) = client.get_graffiti(&validator_public_key.compress()).await {
-        return Ok(());
-    }
 
     match client
         .delete_validators_keystore_share(&KeystoreShareValidatorPostRequest {

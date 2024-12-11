@@ -204,6 +204,17 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             );
         }
 
+
+        let safestake_database_path = config.validator_dir.join(DVF_DATABASE_PATH);
+        let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path)
+            .map_err(|e| {
+                format!(
+                    "Failed to open or create slashing protection database: {:?}",
+                    e
+                )
+            })?;
+        ContractService::set_validators_fee_recipient(&config.safestake_config, &safestake_database, &mut validator_defs).await?;
+
         let (sender, recv) = tokio::sync::mpsc::channel(1000);
 
         let validators = InitializedValidators::from_definitions(
@@ -520,14 +531,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             .build()?;
 
         //
-        let safestake_database_path = config.validator_dir.join(DVF_DATABASE_PATH);
-        let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path)
-            .map_err(|e| {
-                format!(
-                    "Failed to open or create slashing protection database: {:?}",
-                    e
-                )
-            })?;
+        
 
         let preparation_service = PreparationServiceBuilder::new()
             .slot_clock(slot_clock.clone())
@@ -565,8 +569,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             config.safestake_config.operator_id
         );
 
-        ContractService::check_operator(&config.safestake_config).await?;
-        ContractService::query_all_operators(&config.safestake_config, &safestake_database).await?;
+        ContractService::preparation(&config.safestake_config, &safestake_database).await?;
+        
         ContractService::spawn_pull_logs(
             log.clone(),
             config.safestake_config.clone(),
