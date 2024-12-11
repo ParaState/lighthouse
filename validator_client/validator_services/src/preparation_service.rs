@@ -442,7 +442,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
                                     "error" => %e,
                                     "validator public key" => %&key.pubkey
                                 );
-                                1733373566
+                                1733917155
                             }
                         };
                         timestamp

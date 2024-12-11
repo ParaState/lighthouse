@@ -61,12 +61,13 @@ sol!(
         struct Validator {
             address ownerAddress;       // one address may have many validators, this validator's index in _owners.validators
             uint32[] operatorIds;       // releated operators ids
-            uint32 indexInOwner;
+            uint32 indexInOwner;        // index 
             bytes publicKey;            // public key
         }
         mapping(bytes => Validator) public _validators;
         mapping(uint32 => Operator) public _operators;
-        Counter public _lastOperatorId;  
+        Counter public _lastOperatorId; 
+        function validatorOf(bytes calldata pubkey) external view returns(address,uint32[] memory,uint32,bytes memory publicKey); 
     }
 );
 
@@ -129,9 +130,9 @@ impl SafeStakeRegistryContract {
         Ok(operator)
     }
 
-    async fn query_validator_owner(&self, validator_public_key: &PublicKey) -> Result<Address, String> {
-        let SafeStakeRegistry::_validatorsReturn { _0, .. } = self._validators(Bytes::copy_from_slice(&validator_public_key.serialize())).call().await.map_err(|e| e.to_string())?;
-        Ok(_0)
+    async fn query_validator_data(&self, validator_public_key: &PublicKey) -> Result<(Address, Vec<u32>), String> {
+        let SafeStakeRegistry::validatorOfReturn { _0, _1, .. } = self.validatorOf(Bytes::copy_from_slice(&validator_public_key.serialize())).call().await.map_err(|e| e.to_string())?;
+        Ok((_0, _1))
     }
 }
 
@@ -139,6 +140,14 @@ impl SafeStakeConfigContract {
     async fn query_owner_fee_recipient(&self, owner: Address) -> Result<Address, String> {
         let SafeStakeConfig::getFeeRecipientAddressReturn { _0 } = self.getFeeRecipientAddress(owner).call().await.map_err(|e| e.to_string())?;
         Ok(_0)
+    }
+}
+
+impl SafeStakeNetworkContract {
+    async fn query_validator_registration_block(&self, validator_public_key: &PublicKey) -> Result<u64, String> {
+        let SafeStakeNetwork::_validatorDatasReturn { _0, .. } = self._validatorDatas(Bytes::copy_from_slice(&validator_public_key.serialize())).call().await.map_err(|e| e.to_string())?;
+        let start_block: u64 = _0.try_into().unwrap();
+        Ok(start_block)
     }
 }
 
@@ -237,9 +246,17 @@ impl ContractService {
             .map_err(|e| e.to_string())?,
             provider.clone(),
         );
+
+        let network_contract = SafeStakeNetworkContract::new(
+            config.network_contract.parse::<Address>()
+            .map_err(|e| e.to_string())?,
+            provider.clone(),
+        );
         let mut owner_fee_recipients: HashMap<Address, Address> = HashMap::new();
         for def in validator_defs.as_mut_slice() {
-            let owner = registry_contract.query_validator_owner(&def.voting_public_key).await?;
+            let (owner, releated_ops) = registry_contract.query_validator_data(&def.voting_public_key).await?;
+            let block = network_contract.query_validator_registration_block(&def.voting_public_key).await?;
+            let timestamp = qeury_block_timestamp(&provider, block).await;
             if !owner_fee_recipients.contains_key(&owner) {
                 let fee_recipient = config_contract.query_owner_fee_recipient(owner).await?;
                 if fee_recipient == Address::zero() {
@@ -248,6 +265,16 @@ impl ContractService {
                     owner_fee_recipients.insert(owner, fee_recipient);
                 }
             }
+            let validator = Validator {
+                owner: owner.clone(),
+                public_key: def.voting_public_key.clone(),
+                releated_operators: releated_ops,
+                active: def.enabled,
+                registration_timestamp: timestamp
+            };
+            let _ = db.with_transaction(|tx| {
+                db.insert_validator(tx, &validator)
+            });
             def.suggested_fee_recipient = Some(owner_fee_recipients.get(&owner).unwrap().clone());
         }
         owner_fee_recipients.iter().for_each(|(o, f)| {
@@ -326,7 +353,6 @@ impl ContractService {
                                         let block_timestamp = qeury_block_timestamp(
                                             &provider,
                                             log_block_num,
-                                            &logger,
                                         )
                                         .await;
                                         if let Err(e) = handle_events(
@@ -786,7 +812,7 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     id
 }
 
-async fn qeury_block_timestamp(provider: &P, block_number: u64, logger: &Logger) -> u64 {
+async fn qeury_block_timestamp(provider: &P, block_number: u64) -> u64 {
     match provider
         .get_block(
             BlockId::Number(BlockNumberOrTag::Number(block_number)),
@@ -798,16 +824,11 @@ async fn qeury_block_timestamp(provider: &P, block_number: u64, logger: &Logger)
             if let Some(b) = r {
                 b.header.inner.timestamp
             } else {
-                1733373566
+                1733916250
             }
         }
-        Err(e) => {
-            warn!(
-                logger,
-                "query block timestamp";
-                "error" => %e
-            );
-            1733373566
+        Err(_) => {
+            1733916250
         }
     }
 }
