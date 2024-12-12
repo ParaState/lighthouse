@@ -190,8 +190,8 @@ impl SafeStakeDatabase {
         txn.execute(
             "UPDATE validators set registration_timestamp = ?1 where public_key = ?2",
             params![
+                registration_timestamp.to_string(),
                 validator_public_key.to_string(),
-                registration_timestamp.to_string()
             ],
         )?;
         Ok(())
