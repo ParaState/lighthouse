@@ -566,7 +566,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             safestake_database.clone(),
             sender.clone(),
             &context.executor,
-            config.safestake_config.operator_id
+            config.safestake_config.operator_id,
+            config.safestake_config.http_api_port
         );
 
         ContractService::preparation(&config.safestake_config, &safestake_database).await?;
@@ -603,6 +604,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             &config.validator_dir,
             recv,
             &context.executor,
+            config.safestake_config.http_api_port
         );
 
         SafestakeService::serving(

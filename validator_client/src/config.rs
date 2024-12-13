@@ -313,6 +313,9 @@ impl Config {
             config.http_api.listen_port = port
                 .parse::<u16>()
                 .map_err(|_| "http-port is not a valid u16.")?;
+            config.safestake_config.http_api_port = port
+                .parse::<u16>()
+                .map_err(|_| "http-port is not a valid u16.")?;
         }
 
         if let Some(allow_origin) = cli_args.get_one::<String>("http-allow-origin") {

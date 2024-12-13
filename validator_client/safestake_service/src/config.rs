@@ -24,6 +24,7 @@ pub struct Config {
     pub base_port: u16,
     pub validator_dir: PathBuf,
     pub secrets_dir: PathBuf,
+    pub http_api_port: u16
 }
 
 impl Default for Config {
@@ -52,6 +53,7 @@ impl Default for Config {
             base_port: DEFAULT_BASE_PORT,
             validator_dir: validator_dir,
             secrets_dir: secrets_dir,
+            http_api_port: 5062
         }
     }
 }

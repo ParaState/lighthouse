@@ -236,12 +236,13 @@ impl DiscoveryService {
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         executor: &TaskExecutor,
         self_operator_id: u32, 
+        http_port: u16
     ) {
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
         executor.spawn(
             async move {
                 let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
-                let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+                let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", http_port)).unwrap();
                 let api_pubkey = api_secret.api_token();
                 let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
                 loop {

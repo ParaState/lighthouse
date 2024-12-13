@@ -61,9 +61,10 @@ impl<E: EthSpec> SafestakeService<E> {
         validator_dir: &PathBuf,
         mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>,
         executor: &TaskExecutor,
+        http_port: u16
     ) -> Self {
         let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
-        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:5062")).unwrap();
+        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", http_port)).unwrap();
         let api_pubkey = api_secret.api_token();
         let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
         let log = logger.clone();
