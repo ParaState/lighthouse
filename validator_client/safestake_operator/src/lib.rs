@@ -16,6 +16,8 @@ use slog::{error, info, Logger};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::thread::sleep;
+use std::time::Duration;
 use tokio::sync::OnceCell;
 use tonic::transport::Channel;
 use types::{graffiti::GraffitiString, AttestationData, PublicKey};
@@ -129,15 +131,24 @@ pub struct RemoteOperator {
 impl TOperator for RemoteOperator {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
         let mut client = SafestakeClient::new(self.channel.clone());
-        let request = tonic::Request::new(GetSignatureRequest {
-            version: VERSION,
-            msg: msg.0.to_vec(),
-            validator_public_key: self.validator_public_key.serialize().to_vec(),
-        });
-        match client.get_signature(request).await {
-            Ok(response) => Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
-            Err(e) => Err(DvfError::SignatureNotFound(e.to_string())),
+        
+        for _ in 0..3 {
+            let request = tonic::Request::new(GetSignatureRequest {
+                version: VERSION,
+                msg: msg.0.to_vec(),
+                validator_public_key: self.validator_public_key.serialize().to_vec(),
+            });
+            match client.get_signature(request).await {
+                Ok(response) => {
+                    return Ok(Signature::deserialize(&response.into_inner().signature).unwrap());
+                },
+                Err(_) => {
+                    sleep(Duration::from_millis(200));
+                    continue;
+                },
+            }
         }
+        Err(DvfError::SignatureNotFound(format!("{} not found", msg)))
     }
 
     async fn is_active(&self) -> bool {
