@@ -130,7 +130,7 @@ pub fn status_report(
                     sign_hex: None,
                 };
                 report_body.sign_hex = Some(report_body.sign_digest(&node_secret.secret).unwrap());
-                let url_str = format!("{}{}", safestake_api, "collect_performance");
+                let url_str = format!("{}{}", safestake_api, "status");
                 info!(
                     logger,
                     "status_report";
