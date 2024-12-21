@@ -110,6 +110,18 @@ impl<E: EthSpec> SafestakeService<E> {
                 e
             ))
         })?;
+        if self.validator_client.get_lighthouse_validators_pubkey(&validator_public_key.compress()).await.map_err(|_| {
+            Status::internal(format!(
+                "validator is not enabled on this operator {}",
+                &validator_public_key
+            ))
+        })?.is_none() {
+            return Err(Status::internal(format!(
+                "validator is not enabled on this operator {}",
+                &validator_public_key
+            )));
+        }
+
         Ok(validator_public_key)
     }
 
@@ -411,4 +423,20 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
 
         Ok(Response::new(ProposeBlindedBlockResponse { msg: output }))
     }
+}
+
+#[tokio::test]
+async fn test_query_validator() {
+    use std::path::Path;
+    let api_secret = ApiSecret::create_or_open(&Path::new("/home/jiangyi/.lighthouse/v1/holesky/validators")).unwrap();
+    let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", 5062)).unwrap();
+    let api_pubkey = api_secret.api_token();
+    let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
+    let pk = PublicKey::deserialize(&hex::decode("81d214246ae4ea96f18b8f0dd4a56ed0fef87f0c79a6652ce3743b029b4f0b88e2b58e471652914af756e49f8cb17182").unwrap()).unwrap();
+    println!("{:?}", client.get_lighthouse_validators_pubkey(&pk.compress()).await.map_err(|_| {
+        Status::internal(format!(
+            "validator is not enabled on this operator {}",
+            &pk
+        ))
+    }).unwrap());
 }
