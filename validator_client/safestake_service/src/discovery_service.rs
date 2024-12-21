@@ -342,13 +342,16 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
     };
     if enr.seq() > seq {
         let _ = db.with_transaction(|tx| {
-            let ip = enr.ip4().unwrap();
-            let port = match enr.udp4() {
-                Some(port) => port.checked_sub(DISCOVERY_PORT_OFFSET).unwrap(),
-                None => DEFAULT_BASE_PORT,
-            };
-            let socket_address = SocketAddr::new(IpAddr::V4(ip), port);
-            db.upsert_operator_socket_address(tx, &public_key, &socket_address, enr.seq())
+            if let Some(ip) = enr.ip4() {
+                let port = match enr.udp4() {
+                    Some(port) => port.checked_sub(DISCOVERY_PORT_OFFSET).unwrap(),
+                    None => DEFAULT_BASE_PORT,
+                };
+                let socket_address = SocketAddr::new(IpAddr::V4(ip), port);
+                db.upsert_operator_socket_address(tx, &public_key, &socket_address, enr.seq())
+            } else {
+                Ok(())
+            }
         });
     }
 }
