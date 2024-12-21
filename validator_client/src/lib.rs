@@ -209,7 +209,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path)
             .map_err(|e| {
                 format!(
-                    "Failed to open or create slashing protection database: {:?}",
+                    "Failed to open or create safestake database: {:?}",
                     e
                 )
             })?;

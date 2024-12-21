@@ -119,7 +119,7 @@ impl Default for Config {
             proposer_nodes: Vec::new(),
             allow_unsynced_beacon_node: false,
             disable_auto_discover: false,
-            init_slashing_protection: false,
+            init_slashing_protection: true,
             use_long_timeouts: false,
             graffiti: None,
             graffiti_file: None,
