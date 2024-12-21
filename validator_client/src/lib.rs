@@ -277,23 +277,23 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         }?;
 
         // Check validator registration with slashing protection, or auto-register all validators.
-        if config.init_slashing_protection {
+        // if config.init_slashing_protection {
             slashing_protection
                 .register_validators(voting_pubkeys.iter().copied())
                 .map_err(|e| format!("Error while registering slashing protection: {:?}", e))?;
-        } else {
-            slashing_protection
-                .check_validator_registrations(voting_pubkeys.iter().copied())
-                .map_err(|e| {
-                    format!(
-                        "One or more validators not found in slashing protection database.\n\
-                         Ensure you haven't misplaced your slashing protection database, or \
-                         carefully consider running with --init-slashing-protection (see --help). \
-                         Error: {:?}",
-                        e
-                    )
-                })?;
-        }
+        // } else {
+        //     slashing_protection
+        //         .check_validator_registrations(voting_pubkeys.iter().copied())
+        //         .map_err(|e| {
+        //             format!(
+        //                 "One or more validators not found in slashing protection database.\n\
+        //                  Ensure you haven't misplaced your slashing protection database, or \
+        //                  carefully consider running with --init-slashing-protection (see --help). \
+        //                  Error: {:?}",
+        //                 e
+        //             )
+        //         })?;
+        // }
 
         let last_beacon_node_index = config
             .beacon_nodes
