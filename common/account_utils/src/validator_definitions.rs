@@ -4,7 +4,7 @@
 //! attempt) to load into the `crate::intialized_validators::InitializedValidators` struct.
 
 use crate::{
-    default_keystore_password_path, read_password_string, write_file_via_temporary, ZeroizeString,
+    default_keystore_password_path, default_keystore_share_password_path, read_password_string, write_file_via_temporary, default_operator_committee_definition_path, ZeroizeString,
 };
 use directory::ensure_dir_exists;
 use eth2_keystore::Keystore;
@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use types::{graffiti::GraffitiString, Address, PublicKey};
 use validator_dir::{VOTING_KEYSTORE_FILE, VOTING_KEYSTORE_SHARE_FILE};
 
@@ -458,6 +459,122 @@ impl ValidatorDefinitions {
         Ok(new_defs_count)
     }
 
+    /// Perform a recursive, exhaustive search through `validators_dir` and add any keystores
+    /// matching the `validator_dir::VOTING_KEYSTORE_FILE` file name.
+    ///
+    /// Returns the count of *new* keystores that were added to `self` during this search.
+    ///
+    /// ## Notes
+    ///
+    /// Determines the path for the password file based upon the scheme defined by
+    /// `account_utils::default_keystore_password_path`.
+    ///
+    /// If a keystore cannot be parsed the function does not exit early. Instead it logs an `error`
+    /// and continues searching.
+    pub fn discover_distributed_keystores<P: AsRef<Path>>(
+        &mut self,
+        validators_dir: P,
+        secrets_dir: P,
+        log: &Logger,
+    ) -> Result<usize, Error> {
+        let validators_dir: PathBuf = validators_dir.as_ref().to_path_buf();
+        let mut keystore_paths = vec![];
+        recursively_find_voting_keystores(&validators_dir, &mut keystore_paths)
+            .map_err(Error::UnableToSearchForKeystores)?;
+        
+        let known_paths: HashSet<&PathBuf> = self
+            .0
+            .iter()
+            .filter_map(|def| match &def.signing_definition {
+                SigningDefinition::LocalKeystore {
+                    voting_keystore_path,
+                    ..
+                } => Some(voting_keystore_path),
+                // A Web3Signer validator does not use a local keystore file.
+                SigningDefinition::Web3Signer { .. } => None,
+                SigningDefinition::DistributedKeystore { voting_keystore_share_path, .. } => Some(voting_keystore_share_path),
+            })
+            .collect();
+
+        let known_pubkeys: HashSet<PublicKey> = self
+            .0
+            .iter()
+            .map(|def| def.voting_public_key.clone())
+            .collect();
+        
+        let mut new_defs = keystore_paths
+            .into_iter()
+            .filter_map(|voting_keystore_path| {
+                if known_paths.contains(&voting_keystore_path) {
+                    return None;
+                }
+
+                let keystore_result = File::options()
+                    .read(true)
+                    .create(false)
+                    .open(&voting_keystore_path)
+                    .map_err(|e| format!("{:?}", e))
+                    .and_then(|file| {
+                        KeystoreShare::from_json_reader(file).map_err(|e| format!("{:?}", e))
+                    });
+
+                let keystore = match keystore_result {
+                    Ok(keystore) => keystore,
+                    Err(e) => {
+                        error!(
+                            log,
+                            "Unable to read validator keystore";
+                            "error" => e,
+                            "keystore" => format!("{:?}", voting_keystore_path)
+                        );
+                        return None;
+                    }
+                };
+
+                let voting_keystore_share_password_path = Some(default_keystore_share_password_path(
+                    &keystore,
+                    secrets_dir.as_ref(),
+                ))
+                .filter(|path| path.exists());
+
+                let voting_public_key = keystore.master_public_key.clone();
+                let committee_path = Some(default_operator_committee_definition_path(&keystore.master_public_key, &validators_dir));
+
+
+                if known_pubkeys.contains(&voting_public_key) {
+                    return None;
+                }
+
+
+                Some(ValidatorDefinition {
+                    enabled: true,
+                    voting_public_key,
+                    description: "".to_string(),
+                    graffiti: Some(GraffitiString::from_str("SafeStake Operator").unwrap()),
+                    suggested_fee_recipient: None,
+                    gas_limit: None,
+                    builder_proposals: None,
+                    builder_boost_factor: None,
+                    prefer_builder_proposals: None,
+                    signing_definition: SigningDefinition::DistributedKeystore {
+                        voting_keystore_share_path: voting_keystore_path,
+                        voting_keystore_share_password_path: voting_keystore_share_password_path,
+                        operator_committee_definition_path: committee_path,
+                        voting_keystore_share_password: None, 
+                        operator_id: keystore.share_id
+                    },
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let new_defs_count = new_defs.len();
+
+        self.0.append(&mut new_defs);
+
+        Ok(new_defs_count)
+    }
+
+
     /// Encodes `self` as a YAML string and atomically writes it to the `CONFIG_FILENAME` file in
     /// the `validators_dir` directory.
     ///
@@ -566,6 +683,10 @@ pub fn is_voting_keystore(file_name: &str) -> bool {
     // The format used by Lighthouse.
     if file_name == VOTING_KEYSTORE_FILE {
         return true;
+    }
+
+    if file_name == VOTING_KEYSTORE_SHARE_FILE {
+        return true
     }
 
     // The format exported by the `eth2.0-deposit-cli` library.
@@ -809,4 +930,23 @@ mod tests {
         let def: ValidatorDefinition = serde_yaml::from_str(valid_builder_proposals).unwrap();
         assert_eq!(def.builder_proposals, Some(true));
     }
+
+    #[test]
+    fn distributed_keystore() {
+        let validator_dir = Path::new("~/.lighthouse/v1/holesky/validators");
+        let secrets_dir = Path::new("~/.lighthouse/v1/holesky/secrets");
+        let mut keystore_paths = vec![];
+        recursively_find_voting_keystores(validator_dir, &mut keystore_paths)
+            .map_err(Error::UnableToSearchForKeystores).unwrap();
+        println!("{:?}", keystore_paths);
+
+        let mut def = ValidatorDefinitions::open(validator_dir).unwrap();
+        let _root = slog::Logger::root(
+             slog::Discard,
+             slog::o!("key1" => "value1", "key2" => "value2"),
+        );
+        let n = def.discover_distributed_keystores(validator_dir, secrets_dir, &_root).unwrap();
+        println!("discovered {:?}", n);
+    }
+
 }

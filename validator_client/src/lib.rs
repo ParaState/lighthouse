@@ -189,7 +189,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
 
         if !config.disable_auto_discover {
             let new_validators = validator_defs
-                .discover_local_keystores(&config.validator_dir, &config.secrets_dir, &log)
+                .discover_distributed_keystores(&config.validator_dir, &config.secrets_dir, &log)
                 .map_err(|e| format!("Unable to discover local validator keystores: {:?}", e))?;
             validator_defs.save(&config.validator_dir).map_err(|e| {
                 format!(
