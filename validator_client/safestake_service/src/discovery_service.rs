@@ -306,6 +306,7 @@ impl DiscoveryService {
                                     )
                                 }
                             }
+                            tokio::time::sleep(Duration::from_secs(3)).await;
                             match client
                                 .post_validators_enable(&validator_public_key.compress())
                                 .await
