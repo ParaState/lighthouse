@@ -6,6 +6,7 @@ use safestake_crypto::secret::Secret;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use sensitive_url::SensitiveUrl;
 
 /// Stores the core configuration for this validator instance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,7 +25,8 @@ pub struct Config {
     pub base_port: u16,
     pub validator_dir: PathBuf,
     pub secrets_dir: PathBuf,
-    pub http_api_port: u16
+    pub http_api_port: u16,
+    pub beacon_nodes: Vec<SensitiveUrl>
 }
 
 impl Default for Config {
@@ -53,7 +55,8 @@ impl Default for Config {
             base_port: DEFAULT_BASE_PORT,
             validator_dir: validator_dir,
             secrets_dir: secrets_dir,
-            http_api_port: 5062
+            http_api_port: 5062,
+            beacon_nodes: vec![]
         }
     }
 }

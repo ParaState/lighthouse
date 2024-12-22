@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::OnceCell;
+use tokio::time::timeout;
 use tonic::transport::Channel;
 use types::{graffiti::GraffitiString, AttestationData, PublicKey};
 use types::{Hash256, Keypair, Signature};
@@ -36,7 +37,7 @@ lazy_static! {
 
 pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();
 pub static SAFESTAKE_API: OnceCell<String> = OnceCell::const_new();
-
+pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(800);
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
     SignatureNotFound(String),
@@ -138,11 +139,11 @@ impl TOperator for RemoteOperator {
                 msg: msg.0.to_vec(),
                 validator_public_key: self.validator_public_key.serialize().to_vec(),
             });
-            match client.get_signature(request).await {
-                Ok(response) => {
+            match timeout(RPC_REQUEST_TIMEOUT.clone(), client.get_signature(request)).await {
+                Ok(Ok(response)) => {
                     return Ok(Signature::deserialize(&response.into_inner().signature).unwrap());
                 },
-                Err(_) => {
+                _ => {
                     sleep(Duration::from_millis(200));
                     continue;
                 },
@@ -159,9 +160,8 @@ impl TOperator for RemoteOperator {
             msg: random_hash.0.to_vec(),
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
-
-        match client.check_liveness(request).await {
-            Ok(response) => {
+        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.check_liveness(request)).await {
+            Ok(Ok(response)) => {
                 match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
                     Ok(sig) => {
                         match sig.verify(&Digest::from(&random_hash.0), &self.operator_node_pk) {
@@ -179,11 +179,19 @@ impl TOperator for RemoteOperator {
                     Err(_) => {}
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!(
                     self.logger,
-                    "remote operator liveness";
+                    "operator liveness error";
                     "error" => %e
+                );
+            }
+            Err(_) => {
+                error!(
+                    self.logger,
+                    "operator liveness timeout";
+                    "operator" => self.operator_id,
+                    "socket address" => self.base_address
                 );
             }
         }
@@ -205,19 +213,27 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match client.attest_data(request).await {
-            Ok(_) => {
+        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.attest_data(request)).await {
+            Ok(Ok(_)) => {
                 info!(
                     self.logger,
                     "remote attestation";
                     "signing root" => %domain_hash
                 );
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!(
                     self.logger,
-                    "remote attestation";
+                    "remote attestation error";
                     "error" => %e
+                );
+            }
+            Err(_) => {
+                error!(
+                    self.logger,
+                    "remote attestation timeout";
+                    "operator" => self.operator_id,
+                    "socket address" => self.base_address
                 );
             }
         }
@@ -236,19 +252,32 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match client.propose_full_block(request).await {
-            Ok(_) => {
-                info!(
-                    self.logger,
-                    "remote proposal full block";
-                    "signing root" => %domain_hash
-                );
+        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.propose_full_block(request)).await {
+            Ok(r) => {
+                match r {
+                    Ok(_) => {
+                        info!(
+                            self.logger,
+                            "remote proposal full block";
+                            "signing root" => %domain_hash
+                        );
+                    },
+                    Err(e) => {
+                        error!(
+                            self.logger,
+                            "remote proposal full block error";
+                            "error" => %e
+                        );
+                    } 
+                }
+                
             }
-            Err(e) => {
+            Err(_) => {
                 error!(
                     self.logger,
-                    "remote proposal full block";
-                    "error" => %e
+                    "remote proposal full block timeout";
+                    "operator" => self.operator_id,
+                    "socket address" => self.base_address
                 );
             }
         }
@@ -267,19 +296,32 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match client.propose_blinded_block(request).await {
-            Ok(_) => {
-                info!(
-                    self.logger,
-                    "remote proposal blinded block";
-                    "signing root" => %domain_hash
-                );
+        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.propose_blinded_block(request)).await {
+            Ok(r) => {
+                match r {
+                    Ok(_) => {
+                        info!(
+                            self.logger,
+                            "remote proposal blinded block";
+                            "signing root" => %domain_hash
+                        );
+                    },
+                    Err(e) => {
+                        error!(
+                            self.logger,
+                            "remote proposal blinded block error";
+                            "error" => %e
+                        );
+                    } 
+                }
+                
             }
-            Err(e) => {
+            Err(_) => {
                 error!(
                     self.logger,
-                    "remote proposal blinded block";
-                    "error" => %e
+                    "remote proposal blinded block timeout";
+                    "operator" => self.operator_id,
+                    "socket address" => self.base_address
                 );
             }
         }
@@ -298,20 +340,26 @@ impl TOperator for RemoteOperator {
 pub async fn test_rpc_client() {
     use tonic::transport::Endpoint;
     use types::test_utils::TestRandom;
-    let channel = Endpoint::from_static("http://[::1]:50051").connect_lazy();
+    let channel = Endpoint::from_static("http://54.151.182.45:26000").timeout(Duration::from_secs(2)).connect_lazy();
+    
     let mut client = SafestakeClient::new(channel);
     let random_hash = Hash256::random();
     let mut rng = rand::thread_rng();
-    match client
-        .check_liveness(tonic::Request::new(CheckLivenessRequest {
-            version: VERSION,
-            msg: random_hash.0.to_vec(),
-            validator_public_key: PublicKey::random_for_test(&mut rng).serialize().to_vec(),
-        }))
+    let mut req = tonic::Request::new(CheckLivenessRequest {
+        version: VERSION,
+        msg: random_hash.0.to_vec(),
+        validator_public_key: PublicKey::random_for_test(&mut rng).serialize().to_vec(),
+    });
+    req.set_timeout(Duration::from_secs(2));
+    match tokio::time::timeout(Duration::from_secs(2), client
+        .check_liveness(req))
         .await
     {
-        Ok(r) => {
+        Ok(Ok(r)) => {
             println!("{:?}", r);
+        }
+        Ok(Err(e)) => {
+            println!("{:?}", e);
         }
         Err(e) => {
             println!("{:?}", e);

@@ -510,6 +510,8 @@ impl Config {
 
         config.safestake_config.rpc_url = parse_required(cli_args, "rpc-url")?;
         info!(log, "read rpc-url"; "rpc-url" => &config.safestake_config.rpc_url);
+
+        config.safestake_config.beacon_nodes = config.beacon_nodes.clone();
         Ok(config)
     }
 }

@@ -7,6 +7,8 @@ pub mod math;
 pub mod rand_utils;
 pub mod secp;
 pub mod secret;
+pub mod dkg;
+pub mod io_committee;
 
 macro_rules! define_mod {
     ($name: ident, $mod: path) => {

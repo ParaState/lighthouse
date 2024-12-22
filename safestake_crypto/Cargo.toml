@@ -7,10 +7,15 @@ authors = ["Zico <zhicong303@gmail.com", "Will <jianlinjiang@whu.edu.cn>"]
 [dependencies]
 bls = { workspace = true }
 dvf_utils = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 slog = { workspace = true }
 types = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "signal", "macros", "net"] }
+futures = { workspace = true }
+tokio-util = { workspace = true }
+bincode = { workspace = true }
+ethereum_hashing = { workspace = true }
 
 aes-gcm = "0.10.3"
 array-init = "2.1.0"
@@ -25,3 +30,7 @@ num-traits = "0.2.19"
 rand = { version = "0.8.5", features = ["small_rng"] }
 secp256k1 = { version = "0.30.0", features = ["global-context", "std", "rand"] }
 sha256 = "1.5.0"
+async-trait = "0.1.83"
+
+
+

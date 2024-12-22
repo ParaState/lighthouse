@@ -19,6 +19,8 @@ use safestake_crypto::secp::PublicKey as SecpPublicKey;
 use safestake_database::models::{Operator, Validator};
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::{SafeStakeGraffiti, THRESHOLD_MAP};
+use safestake_crypto::io_committee::{SecureNetIOCommittee, IOCommittee, IOChannel, SecureNetIOChannel};
+use safestake_crypto::dkg::{DKGMalicious, DKGTrait, SimpleDistributedSigner};
 use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
 use slog::{error, info, warn, Logger};
@@ -32,14 +34,14 @@ use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use types::Address as H160;
-use types::EthSpec;
-use types::{Keypair, PublicKey, SecretKey};
+use types::{Keypair, PublicKey, SecretKey, ChainSpec, DepositData, EthSpec, SignedRoot};
 use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
 use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
-
+use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
+use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials};
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -98,17 +100,36 @@ sol!(
     }
 );
 
+sol!(
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    contract SafeStakeClusterNode {
+        event ValidatorKeysGeneration(
+            bytes validatorNodePublicKey,
+            uint32[] operatorIds,
+            uint32 count,
+            uint256 depositAmount,
+            address withdrawAddress
+        );
+    }
+);
+
 type T = Http<Client>;
 type P = RootProvider<T>;
 type SafeStakeRegistryContract = SafeStakeRegistry::SafeStakeRegistryInstance<T, P>;
 type SafeStakeNetworkContract = SafeStakeNetwork::SafeStakeNetworkInstance<T, P>;
 type SafeStakeConfigContract = SafeStakeConfig::SafeStakeConfigInstance<T, P>;
+type SafeStakeClusterNodeContract = SafeStakeClusterNode::SafeStakeClusterNodeInstance<T, P>;
+
 const VALIDATOR_REGISTRATION_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeNetwork::ValidatorRegistration::SIGNATURE_HASH;
 const VALIDATOR_REMOVAL_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeNetwork::ValidatorRemoval::SIGNATURE_HASH;
 const FEE_RECIPIENT_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeConfig::FeeRecipientAddressChanged::SIGNATURE_HASH;
+const VALIDATOR_KEYS_GENERATION: alloy_primitives::FixedBytes<32> = 
+    SafeStakeClusterNode::ValidatorKeysGeneration::SIGNATURE_HASH;
+pub const DKG_PORT_OFFSET: u16 = 5;
 
 impl SafeStakeRegistryContract {
     async fn query_operator(&self, operator_id: u32) -> Result<Operator, String> {
@@ -343,6 +364,7 @@ impl ContractService {
                                     VALIDATOR_REGISTRATION_TOPIC,
                                     VALIDATOR_REMOVAL_TOPIC,
                                     FEE_RECIPIENT_TOPIC,
+                                    VALIDATOR_KEYS_GENERATION
                                 ]);
                             match provider.get_logs(&filter).await {
                                 Ok(mut logs) => {
@@ -522,6 +544,9 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
             handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
+        }
+        Some(&VALIDATOR_KEYS_GENERATION) => {
+
         }
         _ => {}
     };
@@ -801,6 +826,114 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
     Ok(())
 }
 
+async fn handle_cluster_node_registration<E: EthSpec>(
+    log: &Log,
+    logger: &Logger,
+    config: &Config,
+    db: &SafeStakeDatabase,
+    sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+) -> Result<(), String> {
+    let SafeStakeClusterNode::ValidatorKeysGeneration{
+        count,
+        operatorIds,
+        validatorNodePublicKey,
+        depositAmount,
+        withdrawAddress
+    } = log.log_decode().map_err(|e| e.to_string())?.inner.data;
+    if operatorIds.contains(&config.operator_id) {
+        let provider: P = ProviderBuilder::new().on_http(
+            config
+                .rpc_url
+                .parse::<reqwest::Url>()
+                .map_err(|e| e.to_string())?,
+        );
+        let registry_contract = SafeStakeRegistryContract::new(
+            config
+                .registry_contract
+                .parse::<Address>()
+                .map_err(|e| e.to_string())?,
+            provider.clone(),
+        );
+        let op_ids: Vec<u64> = operatorIds.iter().map(|x| *x as u64).collect();
+
+        let mut operator_public_keys = vec![];
+        for operator_id in operatorIds {
+            let operator = registry_contract.query_operator(operator_id).await?;
+            db.with_transaction(|t| db.insert_operator(t, &operator))
+                .map_err(|e| format!("failed to insert operator {}", e.to_string()))?;
+            operator_public_keys.push(operator.public_key);
+        }
+
+        let mut socket_addresses = vec![];
+        for public_key in &operator_public_keys {
+            let (tx, rx) = oneshot::channel();
+            sender.send((public_key.clone(), tx)).await.unwrap();
+            let addr = rx.await.unwrap();
+            match addr {
+                Some(a) => socket_addresses.push(a),
+                None => {
+                    return Err(format!("failed to find the socket address of {}", public_key.base64()));
+                }
+            }
+        }
+
+        let io = Arc::new(
+            SecureNetIOCommittee::new(
+                config.operator_id as u64,
+                config.base_port + DKG_PORT_OFFSET,
+                &op_ids,
+                &socket_addresses,
+                logger.clone()
+            )
+            .await?,
+        );
+
+        // let keypairs = vec![];
+        // let validator_public_keys = vec![];
+        // let shared_public_keys = vec![];
+        // let encrypted_shared_private_keys = vec![];
+        let threshold = *THRESHOLD_MAP
+            .get(&(op_ids.len() as u64))
+            .ok_or(format!("unkown number of operator committees"))? as usize;
+        for i in 0..count {
+            let dkg = DKGMalicious::new(config.operator_id as u64, io.clone(), threshold);
+            let (keypair, validator_public_key, shared_public_key) = dkg
+                .run()
+                .await
+                .map_err(|e| format!("run dkg failed {:?}", e))?;
+            let encrypted_shared_private_key = {
+                let rng = rand::thread_rng();
+                let mut elgamal = Elgamal::new(rng);
+                let shared_secret_key = keypair.sk.serialize();
+                let encrypted_shared_secret_key = elgamal
+                    .encrypt(shared_secret_key.as_bytes(), &config.node_secret.name)
+                    .map_err(|_e| format!("elgamal encrypt shared secret failed "))?
+                    .to_bytes();
+                hex::encode(encrypted_shared_secret_key)
+            };
+
+            let signer = SimpleDistributedSigner::new(
+                config.operator_id as u64,
+                keypair,
+                validator_public_key,
+                shared_public_key,
+                io.clone(),
+                threshold,
+            );
+
+            let deposit_data = get_distributed_deposit::<SecureNetIOCommittee, SecureNetIOChannel, E>(
+                &signer,
+                withdrawAddress,
+                depositAmount.try_into().unwrap(),
+                &config.beacon_nodes,
+            )
+            .await?;
+        }
+        
+    }
+    Ok(())
+}
+
 pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     let mut little_endian: [u8; 8] = [0; 8];
     let mut i = 0;
@@ -832,6 +965,45 @@ async fn qeury_block_timestamp(provider: &P, block_number: u64) -> u64 {
         }
     }
 }
+
+/// Refer to `/lighthouse/common/deposit_contract/src/lib.rs`
+pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec>(
+    signer: &SimpleDistributedSigner<T, U>,
+    withdraw_address: Address,
+    amount: u64,
+    beacon_nodes_urls: &Vec<SensitiveUrl>,
+) -> Result<DepositData, String> {
+    let withdrawal_credentials = convert_address_to_withdraw_crendentials(withdraw_address);
+    let mut deposit_data = DepositData {
+        pubkey: PublicKeyBytes::from(signer.mpk()),
+        withdrawal_credentials: Hash256::from_slice(&withdrawal_credentials),
+        amount: amount,
+        signature: Signature::empty().into(),
+    };
+    let mut spec = E::default_spec();
+    // query genesis fork version from beacon node
+    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
+    let genesis_data = client
+        .get_beacon_genesis()
+        .await
+        .map_err(|e| {
+            format!("failed to get beacon genesis data {:?}", e)
+        })?
+        .data;
+    spec.genesis_fork_version = genesis_data.genesis_fork_version;
+    // spec.genesis_fork_version = [00, 00, 16, 32];    //this value is for goerli testnet
+    let domain = spec.get_deposit_domain();
+    let msg = deposit_data.as_deposit_message().signing_root(domain);
+
+    let sig = signer.sign(msg).await.map_err(|e| {
+        format!("failed to sign message {:?}", e)
+    })?;
+    deposit_data.signature = SignatureBytes::from(sig);
+
+    Ok(deposit_data)
+}
+
+
 
 #[tokio::test]
 async fn test_rpc_parse() {

@@ -1,4 +1,5 @@
 use crate::secp::SecretKey as SecpSecretKey;
+use crate::secp::PublicKey as SecpPublicKey;
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes128Gcm, Error, Key, KeyInit, Nonce};
 use rand::Rng;
@@ -71,7 +72,8 @@ where
     /// let (_, pk) = elgamal.generate_key();
     /// let cipher = elgamal.encrypt("hello".as_bytes(), &pk);
     /// ```
-    pub fn encrypt(&mut self, msg: &[u8], pk: &PublicKey) -> Result<Ciphertext, Error> {
+    pub fn encrypt(&mut self, msg: &[u8], pk: &SecpPublicKey) -> Result<Ciphertext, Error> {
+        let pk = PublicKey::from_byte_array_compressed(&pk.0).unwrap();
         let (other_sk, other_pk) = self.secp.generate_keypair(&mut self.rng);
 
         let point = ecdh::shared_secret_point(&pk, &other_sk);

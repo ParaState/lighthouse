@@ -1,10 +1,10 @@
-use crate::crypto::define::MODULUS;
-use crate::crypto::ThresholdSignature;
+use crate::define::MODULUS;
+use crate::ThresholdSignature;
 use crate::math::bigint_ext::Ring;
 use crate::math::polynomial::{Commitable, CommittedPoly, Polynomial};
-use crate::network::io_committee::{IOChannel, IOCommittee, PrivateChannel};
-use crate::utils::blst_utils::*;
-use crate::utils::error::DvfError;
+use crate::io_committee::{IOChannel, IOCommittee, PrivateChannel};
+use crate::blst_utils::*;
+use dvf_utils::DvfError;
 use async_trait::async_trait;
 use bls::{
     Hash256, Keypair as WrapKeypair, PublicKey as WrapPublicKey, SecretKey as WrapSecretKey,
@@ -14,13 +14,12 @@ use blst::min_pk::Signature;
 use blst::{blst_p1, blst_p1_affine, blst_scalar};
 use bytes::Bytes;
 use futures::future::join_all;
-use log::{error, info};
 use num_bigint::ToBigInt;
 use num_bigint::{BigInt, Sign};
 use serde::{
     Deserialize as DeserializeTrait, Deserializer, Serialize as SerializeTrait, Serializer,
 };
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ptr;
@@ -207,7 +206,7 @@ impl<'de> DeserializeTrait<'de> for GpkPayload {
 #[async_trait]
 pub trait DKGTrait: Sync + Send {
     async fn run(
-        &self,
+        &self
     ) -> Result<(WrapKeypair, WrapPublicKey, HashMap<u64, WrapPublicKey>), DvfError>;
 }
 
@@ -244,7 +243,7 @@ where
     /// 2. Master public key
     /// 3. A hashmap from a party's ID to its shared public key
     async fn run(
-        &self,
+        &self
     ) -> Result<(WrapKeypair, WrapPublicKey, HashMap<u64, WrapPublicKey>), DvfError> {
         let mut threshold_sig = ThresholdSignature::new(self.threshold);
         let ids = self.io.ids();
@@ -403,7 +402,7 @@ where
             // Sign the encrypted share
             let sig = send_channel.sign(enc_s_ij.clone());
             let sig = WrapSignature::deserialize(sig.to_bytes().as_slice())
-                .map_err(Into::<DvfError>::into)?;
+                .map_err(|e| DvfError::BlsError(e))?;
 
             let payload = VssSharePayload {
                 enc_share: enc_s_ij,
@@ -718,28 +717,11 @@ where
     async fn run(
         &self,
     ) -> Result<(WrapKeypair, WrapPublicKey, HashMap<u64, WrapPublicKey>), DvfError> {
-        info!(
-            "[DKG] Party {}: Distributed key generation start",
-            self.party
-        );
         let (kp, kps, _poly, committed_poly) = self.share_generation()?;
-        info!(
-            "[DKG] Party {}: Genenate local key shares --> Done",
-            self.party
-        );
         let payloads: HashMap<u64, VssSharePayload> =
             self.share_transmission(&kps, &committed_poly).await?;
-        info!("[DKG] Party {}: Transmit encrypted local key shares and committment to other parties --> Done", self.party);
         let vrfy_result = self.share_verification(&payloads);
-        info!(
-            "[DKG] Party {}: Verify received shares and committment --> Success",
-            self.party
-        );
         let other_vrfy_results = self.exchange_verification_results(&vrfy_result).await;
-        info!(
-            "[DKG] Party {}: Exchange verification results --> Done",
-            self.party
-        );
 
         // Issue dispute claim if any verification fails
         let mut self_abort = false;
@@ -750,10 +732,6 @@ where
             self_abort = true;
             self.issude_dispute_claim(*id, payloads.get(&id).unwrap())
                 .await?;
-            info!(
-                "[DKG] Party {}: Issue dispute claim against {} --> Done",
-                self.party, id
-            );
         }
         let mut futs: Vec<_> = Default::default();
         for (id1, other_vrfy_result) in other_vrfy_results.iter() {
@@ -777,23 +755,11 @@ where
             .map(|(a, b, _c)| (a, b))
             .collect::<Vec<(u64, u64)>>();
         if valid_claims.len() > 0 {
-            error!(
-                "[DKG] Party {}: Aborting due to a valid received dispute claim",
-                self.party
-            );
             return Err(DvfError::InvalidDkgShare(valid_claims));
         }
         if self_abort {
-            error!(
-                "[DKG] Party {}: Aborting due to a valid local dispute claim",
-                self.party
-            );
             return Err(DvfError::VssShareVerificationFailed);
         }
-        info!(
-            "[DKG] Party {}: No valid dispute claims found --> Continue",
-            self.party
-        );
 
         let mut committed_polys = HashMap::<u64, CommittedPoly>::default();
         committed_polys.insert(self.party, committed_poly);
@@ -809,29 +775,17 @@ where
             .await?;
         pks.insert(self.party, self_pk);
         let mpk = blst_p1s_add(&pks.into_values().collect::<Vec<blst_p1>>());
-        info!(
-            "[DKG] Party {}: Derive master public key --> Done",
-            self.party
-        );
 
         // Derive group secret key and group public key
         let mut shares = self.reveal_shares(&payloads);
         let self_share = blst_wrap_sk_to_blst_scalar(&kps[&self.party].sk);
         shares.insert(self.party, self_share);
         let (gsk, gpk) = self.construct_group_key(&shares);
-        info!(
-            "[DKG] Party {}: Derive group secret key and public key --> Done",
-            self.party
-        );
 
         // Exchange and verify group public keys
         let gpks = self
             .exchange_group_public_keys(&gpk, &gsk, &committed_polys)
             .await?;
-        info!(
-            "[DKG] Party {}: Exchange and verify group public key --> Success",
-            self.party
-        );
 
         // Convert to desired structs
         let gsk = blst_scalar_to_blst_wrap_sk(&gsk);
@@ -841,10 +795,6 @@ where
             .iter()
             .map(|(id, gpk)| (*id, blst_p1_to_blst_wrap_pk(&gpk)))
             .collect::<HashMap<u64, WrapPublicKey>>();
-        info!(
-            "[DKG] Party {}: Distributed key generation --> Success",
-            self.party
-        );
 
         Ok((gkp, mpk, gpks))
     }
@@ -926,12 +876,12 @@ where
         let ids = results.iter().map(|x| x.0).collect::<Vec<u64>>();
         let pks = results
             .iter()
-            .map(|x| &x.1)
-            .collect::<Vec<&WrapPublicKey>>();
+            .map(|x| x.1.clone())
+            .collect::<Vec<WrapPublicKey>>();
         let sigs = results
             .iter()
-            .map(|x| &x.2)
-            .collect::<Vec<&WrapSignature>>();
+            .map(|x| x.2.clone())
+            .collect::<Vec<WrapSignature>>();
 
         let threshold_sig = ThresholdSignature::new(self.threshold);
         threshold_sig.threshold_aggregate(&sigs[..], &pks[..], &ids[..], msg)
@@ -941,8 +891,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::ThresholdSignature;
-    use crate::network::io_committee::{MemIOCommittee, NetIOCommittee, SecureNetIOCommittee};
+    use crate::ThresholdSignature;
+    use crate::io_committee::{MemIOCommittee, NetIOCommittee, SecureNetIOCommittee};
     use bls::{Keypair, PublicKey, Signature};
     use ethereum_hashing::{Context, Sha256Context};
     use futures::executor::block_on;
@@ -953,13 +903,6 @@ mod tests {
 
     const T: usize = 3;
     const IDS: [u64; 4] = [1, 2, 3, 4];
-
-    fn enable_logger() {
-        let mut logger =
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-        logger.format_timestamp_millis();
-        logger.init();
-    }
 
     fn verify_dkg_results(results: HashMap<u64, (Keypair, PublicKey, HashMap<u64, PublicKey>)>) {
         // Verify master public keys
@@ -972,7 +915,7 @@ mod tests {
 
         // Sign something with the shared keys
         let kps: Vec<Keypair> = IDS.iter().map(|id| results[id].0.clone()).collect();
-        let pks: Vec<&PublicKey> = kps.iter().map(|kp| &kp.pk).collect();
+        let pks: Vec<PublicKey> = kps.iter().map(|kp| kp.pk.clone()).collect();
         let message = "hello world";
         let mut context = Context::new();
         context.update(message.as_bytes());
@@ -982,10 +925,9 @@ mod tests {
         for kp in kps.iter() {
             sigs.push(kp.sk.sign(message));
         }
-        let sigs_ref: Vec<&Signature> = sigs.iter().map(|s| s).collect();
         let m_threshold = ThresholdSignature::new(T);
         let agg_sig = m_threshold
-            .threshold_aggregate(&sigs_ref[..], &pks[..], &IDS[..], message)
+            .threshold_aggregate(&sigs[..], &pks[..], &IDS[..], message)
             .unwrap();
 
         // Verification with the master public key
@@ -1028,10 +970,15 @@ mod tests {
 
         let ports_ref = &ports;
         let addrs_ref = &addrs;
+        
         // Use dkg to generate secret-shared keys
         let futs = (0..IDS.len()).map(|i| async move {
+            let logger = slog::Logger::root(
+                slog::Discard,
+                slog::o!("key1" => "value1", "key2" => "value2"),
+           );
             let io = &Arc::new(
-                NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice())
+                NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice(), logger.clone())
                     .await,
             );
             let dkg = DKGSemiHonest::new(IDS[i], io.clone(), T);
@@ -1056,7 +1003,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_secure_net() {
-        enable_logger();
         let ports: Vec<u16> = IDS.iter().map(|id| (25000 + *id) as u16).collect();
         let addrs: Vec<SocketAddr> = ports
             .iter()
@@ -1067,12 +1013,17 @@ mod tests {
         let addrs_ref = &addrs;
         // Use dkg to generate secret-shared keys
         let futs = (0..IDS.len()).map(|i| async move {
+            let logger = slog::Logger::root(
+                slog::Discard,
+                slog::o!("key1" => "value1", "key2" => "value2"),
+           );
             let io = &Arc::new(
                 SecureNetIOCommittee::new(
                     IDS[i],
                     ports_ref[i],
                     IDS.as_slice(),
                     addrs_ref.as_slice(),
+                    logger.clone()
                 )
                 .await,
             );
@@ -1098,6 +1049,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_sig_net() {
+        
         let ports: Vec<u16> = IDS.iter().map(|id| (25000 + *id) as u16).collect();
         let addrs: Vec<SocketAddr> = ports
             .iter()
@@ -1113,8 +1065,12 @@ mod tests {
         let addrs_ref = &addrs;
         // Use dkg to generate secret-shared keys
         let futs = (0..IDS.len()).map(|i| async move {
+            let logger = slog::Logger::root(
+                slog::Discard,
+                slog::o!("key1" => "value1", "key2" => "value2"),
+           );
             let io = &Arc::new(
-                NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice())
+                NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice(), logger)
                     .await,
             );
             let dkg = DKGSemiHonest::new(IDS[i], io.clone(), T);
