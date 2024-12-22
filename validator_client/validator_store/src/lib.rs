@@ -1241,14 +1241,8 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         match self
             .validators
             .write()
-            .set_validator_definition_fields(
-                validator_public_key,
-                Some(false),
-                None,
-                None,
-                None,
-                None,
-                Some(SafeStakeGraffiti.clone()),
+            .disable_keystore(
+                validator_public_key
             )
             .await
         {

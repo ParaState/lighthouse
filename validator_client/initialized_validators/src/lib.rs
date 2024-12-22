@@ -1728,4 +1728,59 @@ impl InitializedValidators {
                 }
             })?
     }
+
+    // remove keystore but preserve definition
+    pub async fn disable_keystore(
+        &mut self,
+        pubkey: &PublicKey,
+    ) -> Result<(), Error> {
+        // 1. Disable the validator definition.
+        //
+        // We disable before removing so that in case of a crash the auto-discovery mechanism
+        // won't re-activate the keystore.
+        if let Some(def) = self
+            .definitions
+            .as_mut_slice()
+            .iter_mut()
+            .find(|def| &def.voting_public_key == pubkey)
+        {
+            // [Zico]TODO: to be revised
+            if def.signing_definition.is_local_keystore()
+                || def.signing_definition.is_distributed_keystore()
+            {
+                def.enabled = false;
+                self.definitions
+                    .save(&self.validators_dir)
+                    .map_err(Error::UnableToSaveDefinitions)?;
+            } else {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
+
+        // 2. Delete from `self.validators`, which holds the signing method.
+        //    Delete the keystore files.
+        if let Some(initialized_validator) = self.validators.remove(&pubkey.compress()) {
+            if let SigningMethod::LocalKeystore {
+                ref voting_keystore_lockfile,
+                ..
+            } = *initialized_validator.signing_method
+            {
+                // Drop the lock file so that it may be deleted. This is particularly important on
+                // Windows where the lockfile will fail to be deleted if it is still open.
+                drop(voting_keystore_lockfile.lock().take());
+            }
+
+            // [Zico]TODO: to be revised
+            if let SigningMethod::DistributedKeystore {
+                ref voting_keystore_share_lockfile,
+                ..
+            } = *initialized_validator.signing_method
+            {
+                drop(voting_keystore_share_lockfile.lock().take());
+            }
+        }
+        Ok(())
+    }
 }
