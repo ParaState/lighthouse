@@ -3,6 +3,7 @@ use account_utils::{
     default_operator_committee_definition_path,
     operator_committee_definitions::OperatorCommitteeDefinition,
 };
+use bls::PublicKey;
 use dvf_utils::VERSION;
 use dvf_utils::{BOOT_ENRS_CONFIG_FILE, DEFAULT_BASE_PORT};
 use eth2::lighthouse_vc::http_client::ValidatorClientHttpClient;
@@ -10,21 +11,27 @@ use lighthouse_network::discv5::{
     enr::{CombinedKey, Enr, EnrPublicKey, NodeId},
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
-use safestake_crypto::secp::PublicKey as SecpPublicKey;
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
 use sensitive_url::SensitiveUrl;
 use slog::{error, info, Logger};
-use std::collections::HashMap;
 use std::fs::File;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 use task_executor::TaskExecutor;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Interval;
 use validator_http_api::ApiSecret;
+use tonic::transport::Endpoint;
+use safestake_operator::proto::CheckLivenessRequest;
+use safestake_operator::proto::safestake_client::SafestakeClient;
+use types::Hash256;
+use tokio::time::timeout;
+use safestake_crypto::secp::{
+    Digest, PublicKey as SecpPublicKey, Signature as SecpSignature,
+};
+
 pub const DISCOVERY_PORT_OFFSET: u16 = 4;
 
 #[derive(Clone)]
@@ -118,7 +125,6 @@ impl DiscoveryService {
         let discv5_fut = async move {
             let _ = discv5.start().await;
             let mut event_stream = discv5.event_stream().await.unwrap();
-            let mut heartbeats: HashMap<SecpPublicKey, Interval> = HashMap::new();
             let random_node_id = NodeId::random();
             discv5
                 .find_node(random_node_id)
@@ -129,81 +135,47 @@ impl DiscoveryService {
             loop {
                 tokio::select! {
                     Some((node_public_key, notification)) = query_rx.recv() => {
-                        if !heartbeats.contains_key(&node_public_key) {
-                            let mut ht = tokio::time::interval(Duration::from_secs(60 * 10));
-                            ht.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                            heartbeats.insert(node_public_key.clone(), ht);
-                        }
-                        let heartbeat = heartbeats.get_mut(&node_public_key).unwrap();
-                        let ready = std::future::ready(());
-                        tokio::select! {
-                            biased; // Poll from top to bottom
-                            _ = heartbeat.tick() => {
-                                let node_id = NodeId::parse(&keccak_hash::keccak(&node_public_key).0).unwrap();
-                                // discover
-                                match discv5.find_node(node_id).await {
-                                    Ok(v) => v.into_iter().for_each(|enr| handle_enr(&self_public_key, &db, enr)),
-                                    Err(e) => {
-                                        error!(
-                                            logger,
-                                            "discovery service";
-                                            "err" => %e
-                                        );
-                                    }
-                                }
-                                // query from boot
-                                let boot_idx = rand::random::<usize>() % boot_nodes.len();
-                                let addr = boot_nodes[boot_idx];
-                                let mut client = match BootnodeClient::connect(format!("http://{}", addr)).await {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        error!(
-                                            logger,
-                                            "query_boot";
-                                            "error" => %e
-                                        );
-                                        notification.send(None).unwrap();
-                                        continue;
-                                    }
-                                };
-                                let request = tonic::Request::new(QueryNodeAddressRequest {
-                                    version: VERSION,
-                                    operator_public_key: node_public_key.0.to_vec(),
-                                });
-                                match client.query_node_address(request).await {
-                                    Ok(response) => {
-                                        let res = response.into_inner();
-                                        let addr = bincode::deserialize::<SocketAddr>(&res.address).unwrap();
-                                        let _ = db.with_transaction(|tx| {
-                                            db.upsert_operator_socket_address(tx, &node_public_key, &addr, res.seq)
-                                        });
-                                        notification.send(Some(addr)).unwrap()
-                                    },
-                                    Err(e) => {
-                                        error!(
-                                            logger,
-                                            "query boot node";
-                                            "error" => %e
-                                        );
-                                        notification.send(None).unwrap()
-                                    }
-                                }
-                            }
-                            _ = ready => {
-                                let addr = match db.with_transaction(|txn| {
-                                    db.query_operator_socket_address(txn, &node_public_key)
-                                }) {
-                                    Ok(s) => Some(s),
-                                    Err(_) => None
-                                };
-                                notification.send(addr).unwrap()
+                        let boot_idx = rand::random::<usize>() % boot_nodes.len();
+                        let addr = boot_nodes[boot_idx];
+                        let mut client = match BootnodeClient::connect(format!("http://{}", addr)).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    logger,
+                                    "query_boot";
+                                    "error" => %e
+                                );
+                                notification.send(None).unwrap();
+                                continue;
                             }
                         };
+                        let request = tonic::Request::new(QueryNodeAddressRequest {
+                            version: VERSION,
+                            operator_public_key: node_public_key.0.to_vec(),
+                        });
+                        match client.query_node_address(request).await {
+                            Ok(response) => {
+                                let res = response.into_inner();
+                                let addr = bincode::deserialize::<SocketAddr>(&res.address).unwrap();
+                                let _ = db.with_transaction(|tx| {
+                                    db.upsert_operator_socket_address(tx, &node_public_key, &addr, res.seq)
+                                });
+                                notification.send(Some(addr)).unwrap()
+                            },
+                            Err(e) => {
+                                error!(
+                                    logger,
+                                    "query boot node";
+                                    "error" => %e
+                                );
+                                notification.send(None).unwrap()
+                            }
+                        }
                     }
                     Some(event) = event_stream.recv() => {
                         match event {
-                            Event::Discovered(enr) => {
-                                handle_enr(&self_public_key, &db, enr);
+                            Event::Discovered(_) => {
+                                // handle_enr(&self_public_key, &db, enr);
                             }
                             Event::SessionEstablished(enr, _) => {
                                 handle_enr(&self_public_key, &db, enr);
@@ -238,7 +210,7 @@ impl DiscoveryService {
         self_operator_id: u32, 
         http_port: u16
     ) {
-        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 2));
         executor.spawn(
             async move {
                 let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
@@ -264,27 +236,24 @@ impl DiscoveryService {
                             if committee_def.operator_ids[i] == self_operator_id {
                                 continue;
                             }
-                            let (tx, rx) = oneshot::channel();
-                            sender
-                                .send((committee_def.node_public_keys[i].clone(), tx))
+                            if !remote_op_is_active(&logger, committee_def.operator_ids[i], &committee_def.base_socket_addresses[i], &committee_def.node_public_keys[i], &committee_def.validator_public_key).await {
+                                let (tx, rx) = oneshot::channel();
+                                sender.send((committee_def.node_public_keys[i].clone(), tx))
                                 .await
                                 .unwrap();
-                            if let Some(addr) = rx.await.unwrap() {
-                                if let Some(current) =
-                                    committee_def.base_socket_addresses[i].as_mut()
-                                {
-                                    if *current != addr {
-                                        info!(
-                                             logger,
-                                             "opertor_ip_changed";
-                                             "local" => %current,
-                                             "queried" => addr
-                                        );
-                                        *current = addr;
-                                        restart = true;
-                                    }
-                                } else {
-                                    committee_def.base_socket_addresses[i] = Some(addr);
+
+                                let queried_addr = rx.await.unwrap();
+                                if queried_addr.is_none() {
+                                    continue;
+                                }
+                                if committee_def.base_socket_addresses[i] != queried_addr {
+                                    info!(
+                                        logger,
+                                        "opertor ip changed";
+                                        "current" => format!("{:?}", committee_def.base_socket_addresses[i]),
+                                        "queried" => queried_addr
+                                    );
+                                    committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
                                 }
                             }
@@ -355,6 +324,57 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
             }
         });
     }
+}
+
+async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<SocketAddr>, node_public_key: &SecpPublicKey, validator_public_key: &PublicKey) -> bool {
+    if addr.is_none() {
+        return false;
+    }
+    let channel = Endpoint::from_shared(format!("http://{}", addr.unwrap().to_string())).unwrap()
+                                .connect_lazy();
+    let mut client = SafestakeClient::new(channel);
+    let random_hash = Hash256::random();
+    let request = tonic::Request::new(CheckLivenessRequest {
+        version: VERSION,
+        msg: random_hash.0.to_vec(),
+        validator_public_key: validator_public_key.serialize().to_vec(),
+    });
+    match timeout(std::time::Duration::from_millis(800), client.check_liveness(request)).await {
+        Ok(Ok(response)) => {
+            match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
+                Ok(sig) => {
+                    match sig.verify(&Digest::from(&random_hash.0), &node_public_key) {
+                        Ok(_) => {
+                            info!(
+                                logger,
+                                "discovery operator liveness";
+                                "operator" => operator_id
+                            );
+                            return true;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(Err(e)) => {
+            error!(
+                logger,
+                "discovery operator liveness error";
+                "error" => %e
+            );
+        }
+        Err(_) => {
+            error!(
+                logger,
+                "discovery operator liveness timeout";
+                "operator" => operator_id,
+                "socket address" => addr
+            );
+        }
+    }
+    false
 }
 
 #[tokio::test]

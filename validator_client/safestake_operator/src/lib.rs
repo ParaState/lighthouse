@@ -214,11 +214,11 @@ impl TOperator for RemoteOperator {
         });
 
         match timeout(RPC_REQUEST_TIMEOUT.clone(), client.attest_data(request)).await {
-            Ok(Ok(_)) => {
+            Ok(Ok(resp)) => {
                 info!(
                     self.logger,
                     "remote attestation";
-                    "signing root" => %domain_hash
+                    "response" => %resp.into_inner().msg
                 );
             }
             Ok(Err(e)) => {
