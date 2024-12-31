@@ -229,11 +229,12 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
         if req.msg.len() != 32 {
             return Err(Status::internal(format!("invalid message length")));
         }
-        let msg: [u8; 32] = req.msg.try_into().unwrap();
-        let sig = Signature::new(&Digest::from(&msg), &self.secret.secret)
-            .map_err(|e| Status::internal(format!("failed to sign message {:?}", e)))?;
+        // let msg: [u8; 32] = req.msg.try_into().unwrap();
+        // let sig = Signature::new(&Digest::from(&msg), &self.secret.secret)
+        //     .map_err(|e| Status::internal(format!("failed to sign message {:?}", e)))?;
         Ok(Response::new(CheckLivenessResponse {
-            signature: bincode::serialize(&sig).unwrap(),
+            // signature: bincode::serialize(&sig).unwrap(),
+            signature: vec![]
         }))
     }
 

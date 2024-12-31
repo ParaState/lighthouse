@@ -37,7 +37,7 @@ lazy_static! {
 
 pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();
 pub static SAFESTAKE_API: OnceCell<String> = OnceCell::const_new();
-pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(800);
+pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(1200);
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
     SignatureNotFound(String),
@@ -161,23 +161,26 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
         match timeout(RPC_REQUEST_TIMEOUT.clone(), client.check_liveness(request)).await {
-            Ok(Ok(response)) => {
-                match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
-                    Ok(sig) => {
-                        match sig.verify(&Digest::from(&random_hash.0), &self.operator_node_pk) {
-                            Ok(_) => {
-                                info!(
-                                    self.logger,
-                                    "operator liveness";
-                                    "operator" => self.operator_id
-                                );
-                                return true;
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                    Err(_) => {}
-                }
+            Ok(Ok(_)) => {
+                // match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
+                //             Ok(_) => {
+                //                 info!(
+                //                     self.logger,
+                //                     "operator liveness";
+                //                     "operator" => self.operator_id
+                //                 );
+                //                 return true;
+                //             }
+                //             Err(_) => {}
+                //         }
+                //     }
+                //     Err(_) => {}
+                // }
+                info!(
+                    self.logger,
+                    "operator liveness";
+                    "operator" => self.operator_id
+                );
             }
             Ok(Err(e)) => {
                 error!(
