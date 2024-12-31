@@ -122,14 +122,17 @@ impl TOperatorCommittee for DvfOperatorCommittee {
     }
 
     fn get_leader_id(&self, nonce: u64) -> u32 {
-        let index = nonce % self.operators.len() as u64;
+        let validator_id = convert_validator_public_key_to_id(&self.validator_public_key.serialize());
+        let index = (nonce + validator_id) % self.operators.len() as u64;
+        
         let mut ids: Vec<u32> = self.operators.keys().map(|k| *k).collect();
         ids.sort();
         ids[index as usize]
     }
 
     fn get_backup_id(&self, nonce: u64) -> u32 {
-        let index = (nonce + 1) % self.operators.len() as u64;
+        let validator_id = convert_validator_public_key_to_id(&self.validator_public_key.serialize());
+        let index = (nonce + validator_id + 1) % self.operators.len() as u64;
         let mut ids: Vec<u32> = self.operators.keys().map(|k| *k).collect();
         ids.sort();
         ids[index as usize]
@@ -211,6 +214,17 @@ impl DvfOperatorCommittee {
 
         Ok(())
     }
+}
+
+pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
+    let mut little_endian: [u8; 8] = [0; 8];
+    let mut i = 0;
+    for elem in little_endian.iter_mut() {
+        *elem = public_key[i];
+        i = i + 1;
+    }
+    let id = u64::from_le_bytes(little_endian);
+    id
 }
 
 #[tokio::test]
