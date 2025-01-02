@@ -1,7 +1,6 @@
+use bls::SecretKey;
 use dvf_utils::VERSION;
-use eth2::lighthouse_vc::http_client::ValidatorClientHttpClient;
 use safestake_crypto::secp::{Digest, Signature};
-use safestake_crypto::secret::Secret;
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::safestake_server::Safestake;
 use safestake_operator::proto::safestake_server::SafestakeServer;
@@ -10,11 +9,9 @@ use safestake_operator::proto::{
     GetSignatureRequest, GetSignatureResponse, ProposeBlindedBlockRequest,
     ProposeBlindedBlockResponse, ProposeFullBlockRequest, ProposeFullBlockResponse,
 };
-use sensitive_url::SensitiveUrl;
 use signing_method::SignableMessage;
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slog::{error, info, Logger};
-use std::path::PathBuf;
 use std::sync::Arc;
 use store::{KeyValueStore, LevelDB};
 use task_executor::TaskExecutor;
@@ -26,15 +23,17 @@ use types::{
     FullPayload, Hash256,
 };
 use types::{PublicKey, Signature as BlsSignature};
-use validator_http_api::ApiSecret;
-
+use parking_lot::RwLock;
+use account_utils::validator_definitions::{ValidatorDefinitions, SigningDefinition};
+use std::collections::HashMap;
+use eth2_keystore_share::KeystoreShare;
+use validator_dir::insecure_keys::INSECURE_PASSWORD;
 pub struct SafestakeService<E: EthSpec> {
     logger: Logger,
-    secret: Secret,
     store: Arc<LevelDB<E>>,
     slashing_database: SlashingDatabase,
     safestake_database: SafeStakeDatabase,
-    validator_client: ValidatorClientHttpClient,
+    validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
 }
 
 impl<E: EthSpec> SafestakeService<E> {
@@ -54,27 +53,20 @@ impl<E: EthSpec> SafestakeService<E> {
 
     pub fn new(
         logger: Logger,
-        secret: Secret,
         store: Arc<LevelDB<E>>,
         slashing_database: SlashingDatabase,
         safestake_database: SafeStakeDatabase,
-        validator_dir: &PathBuf,
         mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>,
         executor: &TaskExecutor,
-        http_port: u16
+        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
     ) -> Self {
-        let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
-        let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", http_port)).unwrap();
-        let api_pubkey = api_secret.api_token();
-        let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
         let log = logger.clone();
         let safestake_service = Self {
             logger,
-            secret,
             store: store.clone(),
             slashing_database,
             safestake_database: safestake_database.clone(),
-            validator_client: client,
+            validator_keys
         };
         let store_fut = async move {
             loop {
@@ -110,12 +102,18 @@ impl<E: EthSpec> SafestakeService<E> {
                 e
             ))
         })?;
-        if self.validator_client.get_lighthouse_validators_pubkey(&validator_public_key.compress()).await.map_err(|_| {
-            Status::internal(format!(
-                "validator is not enabled on this operator {}",
-                &validator_public_key
-            ))
-        })?.is_none() {
+        // if self.validator_client.get_lighthouse_validators_pubkey(&validator_public_key.compress()).await.map_err(|_| {
+        //     Status::internal(format!(
+        //         "validator is not enabled on this operator {}",
+        //         &validator_public_key
+        //     ))
+        // })?.is_none() {
+        //     return Err(Status::internal(format!(
+        //         "validator is not enabled on this operator {}",
+        //         &validator_public_key
+        //     )));
+        // }
+        if !self.validator_keys.read().contains_key(&validator_public_key) {
             return Err(Status::internal(format!(
                 "validator is not enabled on this operator {}",
                 &validator_public_key
@@ -153,19 +151,22 @@ impl<E: EthSpec> SafestakeService<E> {
         validator_public_key: &PublicKey,
         msg: Hash256,
     ) -> Result<BlsSignature, Status> {
-        self.validator_client
-            .post_keypair_sign(&validator_public_key.compress(), msg)
-            .await
-            .map_err(|_| {
-                Status::internal(format!(
-                    "unkown validator public key {}",
-                    validator_public_key
-                ))
-            })?
-            .ok_or(Status::internal(format!(
-                "unkown validator public key {}",
-                validator_public_key
-            )))
+        // self.validator_client
+        //     .post_keypair_sign(&validator_public_key.compress(), msg)
+        //     .await
+        //     .map_err(|_| {
+        //         Status::internal(format!(
+        //             "unkown validator public key {}",
+        //             validator_public_key
+        //         ))
+        //     })?
+        //     .ok_or(Status::internal(format!(
+        //         "unkown validator public key {}",
+        //         validator_public_key
+        //     )))
+        Ok(self.validator_keys.read().get(validator_public_key).ok_or(Status::internal(format!(
+            "unkown validator public key {}", validator_public_key
+        )))?.sign(msg))
     }
 
     async fn sign_block<Payload: AbstractExecPayload<E>>(
@@ -440,4 +441,28 @@ async fn test_query_validator() {
             &pk
         ))
     }).unwrap());
+}
+
+pub fn get_validator_keys(validator_defs: &ValidatorDefinitions) -> Result<HashMap<PublicKey, SecretKey>, String> {
+    let mut validator_secretkey = HashMap::new();
+
+    for validator_def in validator_defs.as_slice() {
+        let voting_key = validator_def.voting_public_key.clone();
+        match &validator_def.signing_definition {
+            SigningDefinition::DistributedKeystore { voting_keystore_share_path, .. } => {
+                let keystore = std::fs::File::options()
+                    .read(true)
+                    .create(false)
+                    .open(voting_keystore_share_path)
+                    .map_err(|e| format!("{:?}", e))
+                    .and_then(|file| {
+                        KeystoreShare::from_json_reader(file).map_err(|e| format!("{:?}", e))
+                    })?;
+                let sk = keystore.keystore.decrypt_keypair(INSECURE_PASSWORD).unwrap().sk;
+                validator_secretkey.insert(voting_key, sk);
+            },
+            _ => {}
+        }
+    }
+    Ok(validator_secretkey)
 }

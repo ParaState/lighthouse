@@ -34,13 +34,14 @@ use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use types::Address as H160;
-use types::{Keypair, PublicKey, SecretKey, ChainSpec, DepositData, EthSpec, SignedRoot};
+use types::{Keypair, PublicKey, SecretKey, DepositData, EthSpec, SignedRoot};
 use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
 use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
 use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
+use parking_lot::RwLock;
 use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials};
 sol!(
     #[allow(missing_docs)]
@@ -315,6 +316,7 @@ impl ContractService {
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
     ) {
         let provider: P =
             ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
@@ -386,6 +388,7 @@ impl ContractService {
                                             &db,
                                             &sender,
                                             &client,
+                                            &validator_keys
                                         )
                                         .await
                                         {
@@ -525,6 +528,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
+    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
@@ -536,11 +540,12 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
                 db,
                 sender,
                 client,
+                validator_keys
             )
             .await?;
         }
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
-            handle_validator_removal(log, logger, config, db, client).await?;
+            handle_validator_removal(log, logger, config, db, client, validator_keys).await?;
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
             handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
@@ -561,6 +566,7 @@ async fn handle_validator_registration(
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
+    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRegistration {
         _0,
@@ -700,7 +706,9 @@ async fn handle_validator_registration(
             })
             .await
         {
-            Ok(_) => {}
+            Ok(_) => {
+                validator_keys.write().insert(validator_public_key.clone(), key_pair.sk);
+            }
             Err(e) => {
                 error!(
                     logger,
@@ -729,6 +737,7 @@ async fn handle_validator_removal(
     config: &Config,
     db: &SafeStakeDatabase,
     client: &ValidatorClientHttpClient,
+    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRemoval { _0, _1 } =
         log.log_decode().map_err(|e| e.to_string())?.inner.data;
@@ -746,7 +755,9 @@ async fn handle_validator_removal(
         })
         .await
     {
-        Ok(_) => {}
+        Ok(_) => {
+            validator_keys.write().remove(&validator_public_key);
+        }
         Err(e) => {
             error!(
                 logger,

@@ -29,7 +29,7 @@ use safestake_database::SafeStakeDatabase;
 use safestake_operator::report::status_report;
 use safestake_service::contract_service::ContractService;
 use safestake_service::discovery_service::DiscoveryService;
-use safestake_service::operator_service::SafestakeService;
+use safestake_service::operator_service::{SafestakeService, get_validator_keys};
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
@@ -204,6 +204,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             );
         }
 
+        let validator_keys = Arc::new(RwLock::new(get_validator_keys(&validator_defs)?));
 
         let safestake_database_path = config.validator_dir.join(DVF_DATABASE_PATH);
         let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path)
@@ -579,6 +580,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             safestake_database.clone(),
             &context.executor,
             sender,
+            validator_keys.clone()
         )
         .await;
 
@@ -597,14 +599,12 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
 
         let operator_service = SafestakeService::new(
             log.clone(),
-            config.safestake_config.node_secret.clone(),
             store,
             slashing_protection.clone(),
             safestake_database,
-            &config.validator_dir,
             recv,
             &context.executor,
-            config.safestake_config.http_api_port
+            validator_keys
         );
 
         SafestakeService::serving(
