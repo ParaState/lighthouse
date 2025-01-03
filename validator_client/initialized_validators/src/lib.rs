@@ -468,7 +468,7 @@ impl InitializedValidator {
                     local_operator_id,
                     Box::new(LocalOperator {
                         operator_id: local_operator_id,
-                        operator_keypair: voting_keypair.clone(),
+                        share_public_key: voting_keypair.pk.clone(),
                     }),
                 );
 

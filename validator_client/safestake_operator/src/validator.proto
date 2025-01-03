@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package cluster;
+
+message ValidatorGenerationRequest {
+    uint32 operator_id = 1;
+    bytes operator_public_key = 2;
+    bytes validator_public_key = 3;
+    bytes encrypted_shared_key = 4;
+    bytes shared_public_key = 5;
+    string deposti_data = 6;
+    optional bytes signature = 7;
+    bytes transaction_hash = 8;
+}
+
+message ValidatorGenerationResponse {
+
+}
+
+message ValidatorExitRequest {
+
+}
+
+message ValidatorExitResponse {
+
+}
+
+service grpc {
+    rpc ValidatorGeneration(ValidatorGenerationRequest) returns (ValidatorGenerationResponse) {}
+    rpc ValidatorExit(ValidatorExitRequest) returns (ValidatorExitResponse) {}
+}

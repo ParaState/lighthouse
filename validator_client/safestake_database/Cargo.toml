@@ -10,7 +10,7 @@ path = "tests/main.rs"
 [dependencies]
 
 alloy-primitives = "0.8.13"
-r2d2_sqlite = "0.21.0"
+r2d2_sqlite = "0.25.0"
 
 bls = { workspace = true }
 filesystem = { workspace = true }

@@ -22,7 +22,7 @@ use tokio::sync::OnceCell;
 use tokio::time::timeout;
 use tonic::transport::Channel;
 use types::{graffiti::GraffitiString, AttestationData, PublicKey};
-use types::{Hash256, Keypair, Signature};
+use types::{Hash256, Signature};
 
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
@@ -88,7 +88,7 @@ pub trait TOperator: Sync + Send {
 
 pub struct LocalOperator {
     pub operator_id: u32,
-    pub operator_keypair: Keypair,
+    pub share_public_key: PublicKey,
 }
 
 #[async_trait]
@@ -112,7 +112,7 @@ impl TOperator for LocalOperator {
     }
 
     fn shared_public_key(&self) -> PublicKey {
-        self.operator_keypair.pk.clone()
+        self.share_public_key.clone()
     }
 }
 
@@ -373,7 +373,7 @@ pub async fn test_rpc_client() {
 #[tokio::test]
 async fn test_liveness() {
     use std::net::{Ipv4Addr, IpAddr};
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(13, 215, 100, 234)), 26000);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(3, 1, 157, 181)), 26000);
     let addr_str = format!("http://{}", addr.to_string());
 
     let mut client = SafestakeClient::connect(addr_str).await.unwrap();
@@ -381,7 +381,7 @@ async fn test_liveness() {
     let request = tonic::Request::new(CheckLivenessRequest {
         version: VERSION,
         msg: random_hash.0.to_vec(),
-        validator_public_key: hex::decode("a75658657efffaab8c2f9d36f95d04d91df370ff44c1b936769702c1b38907d992a8b7a7dfe587fc4510ce7b7e92be48").unwrap(),
+        validator_public_key: hex::decode("a025fd6f9806c4af7fde3a73cd71aa92dea92fe232c95cc8393a8974755e9719128e654006b46d106fd372d968da6114").unwrap(),
     });
 
     println!("{:?}, ", client.check_liveness(request).await.unwrap());

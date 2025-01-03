@@ -360,4 +360,19 @@ impl SafeStakeDatabase {
             Ok(SecpPublicKey::from_base64(&public_key).unwrap())
         })?)
     }
+
+    pub fn query_releated_operator(
+        &self,
+        txn: &Transaction,
+        validator_public_key: &PublicKey
+    ) -> Result<Vec<u32>, NotSafe> {
+        txn.prepare(
+            "select validator_public_key from validator_operators_mapping where operator_id =?1",
+        )?
+        .query_and_then(params![validator_public_key.as_hex_string()], |row| {
+            let operator_id: u32 = row.get(0).unwrap();
+            Ok(operator_id)
+        })?
+        .collect()
+    }
 }

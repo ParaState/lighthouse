@@ -18,7 +18,8 @@ use safestake_crypto::elgamal::{Ciphertext, Elgamal};
 use safestake_crypto::secp::PublicKey as SecpPublicKey;
 use safestake_database::models::{Operator, Validator};
 use safestake_database::SafeStakeDatabase;
-use safestake_operator::{SafeStakeGraffiti, THRESHOLD_MAP};
+use safestake_operator::{SafeStakeGraffiti, THRESHOLD_MAP, operator_committee::DvfOperatorCommittee, LocalOperator};
+use safestake_operator::generic_operator_committee::TOperatorCommittee;
 use safestake_crypto::io_committee::{SecureNetIOCommittee, IOCommittee, IOChannel, SecureNetIOChannel};
 use safestake_crypto::dkg::{DKGMalicious, DKGTrait, SimpleDistributedSigner};
 use sensitive_url::SensitiveUrl;
@@ -33,8 +34,8 @@ use std::sync::Arc;
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use types::Address as H160;
-use types::{Keypair, PublicKey, SecretKey, DepositData, EthSpec, SignedRoot};
+use types::{Address as H160, Epoch};
+use types::{Keypair, PublicKey, SecretKey, DepositData, EthSpec, SignedRoot, SignedVoluntaryExit, VoluntaryExit, Domain};
 use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
@@ -42,7 +43,15 @@ use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
 use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
 use parking_lot::RwLock;
-use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials};
+use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials, get_validator_index_for_exit, get_beacon_state_fork};
+use safestake_operator::proto::{
+    ValidatorGenerationRequest, ValidatorExitResponse, ValidatorGenerationResponse, ValidatorExitRequest
+};
+use safestake_operator::proto::grpc_client::GrpcClient;
+use safestake_operator::RPC_REQUEST_TIMEOUT;
+use tokio::time::timeout;
+use tonic::transport::Endpoint;
+
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -105,12 +114,18 @@ sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
     contract SafeStakeClusterNode {
-        event ValidatorKeysGeneration(
-            bytes validatorNodePublicKey,
+        event ValidatorDepositDataGeneration(
+            bytes clusterNodePublicKey,
+            uint256 validatorCount,
             uint32[] operatorIds,
-            uint32 count,
             uint256 depositAmount,
             address withdrawAddress
+        );
+
+        event ValidatorExitDataGeneration(
+            bytes clusterNodePublicKey,
+            bytes[] validatorPubKeys,
+            uint256 activeEpoch
         );
     }
 );
@@ -129,8 +144,11 @@ const VALIDATOR_REMOVAL_TOPIC: alloy_primitives::FixedBytes<32> =
 const FEE_RECIPIENT_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeConfig::FeeRecipientAddressChanged::SIGNATURE_HASH;
 const VALIDATOR_KEYS_GENERATION: alloy_primitives::FixedBytes<32> = 
-    SafeStakeClusterNode::ValidatorKeysGeneration::SIGNATURE_HASH;
+    SafeStakeClusterNode::ValidatorDepositDataGeneration::SIGNATURE_HASH;
+const VALIDATOR_EXIT_DATA_GENERATION: alloy_primitives::FixedBytes<32> = 
+    SafeStakeClusterNode::ValidatorExitDataGeneration::SIGNATURE_HASH;
 pub const DKG_PORT_OFFSET: u16 = 5;
+
 
 impl SafeStakeRegistryContract {
     async fn query_operator(&self, operator_id: u32) -> Result<Operator, String> {
@@ -316,7 +334,8 @@ impl ContractService {
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
-        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
+        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
+        store_sender: mpsc::Sender<(Hash256, Signature, PublicKey)>
     ) {
         let provider: P =
             ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
@@ -345,7 +364,7 @@ impl ContractService {
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", config.http_api_port)).unwrap();
         let api_pubkey = api_secret.api_token();
         let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
-
+        let executor_ = executor.clone();
         executor.spawn(
             async move {
                 loop {
@@ -366,7 +385,8 @@ impl ContractService {
                                     VALIDATOR_REGISTRATION_TOPIC,
                                     VALIDATOR_REMOVAL_TOPIC,
                                     FEE_RECIPIENT_TOPIC,
-                                    VALIDATOR_KEYS_GENERATION
+                                    VALIDATOR_KEYS_GENERATION,
+                                    VALIDATOR_EXIT_DATA_GENERATION
                                 ]);
                             match provider.get_logs(&filter).await {
                                 Ok(mut logs) => {
@@ -388,18 +408,18 @@ impl ContractService {
                                             &db,
                                             &sender,
                                             &client,
-                                            &validator_keys
+                                            &validator_keys,
+                                            &executor_,
+                                            &store_sender
                                         )
                                         .await
                                         {
                                             warn!(logger, "process events"; "error reason" => e);
                                             continue;
                                         }
-
-                                        tokio::task::spawn_blocking(|| {});
                                     }
                                     record.block_num =
-                                        std::cmp::min(current_block, target_block + 1);
+                                        std::cmp::min(current_block + 1, target_block + 1);
                                     let _ = record.to_file(&config.contract_record_path);
                                 }
                                 Err(e) => {
@@ -412,7 +432,7 @@ impl ContractService {
                         }
                     }
                 }
-            },
+            }, 
             "pull_events",
         );
     }
@@ -528,7 +548,9 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
-    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>
+    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
+    executor: &TaskExecutor,
+    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
@@ -551,7 +573,10 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
         }
         Some(&VALIDATOR_KEYS_GENERATION) => {
-
+            handle_validator_key_generation::<E>(log, logger, config, db, sender).await?;
+        }
+        Some(&VALIDATOR_EXIT_DATA_GENERATION) => {
+            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender).await?;
         }
         _ => {}
     };
@@ -837,19 +862,19 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
     Ok(())
 }
 
-async fn handle_cluster_node_registration<E: EthSpec>(
+async fn handle_validator_key_generation<E: EthSpec>(
     log: &Log,
     logger: &Logger,
     config: &Config,
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
 ) -> Result<(), String> {
-    let SafeStakeClusterNode::ValidatorKeysGeneration{
-        count,
+    let SafeStakeClusterNode::ValidatorDepositDataGeneration{
+        clusterNodePublicKey,
+        validatorCount,
         operatorIds,
-        validatorNodePublicKey,
         depositAmount,
-        withdrawAddress
+        withdrawAddress,
     } = log.log_decode().map_err(|e| e.to_string())?.inner.data;
     if operatorIds.contains(&config.operator_id) {
         let provider: P = ProviderBuilder::new().on_http(
@@ -899,16 +924,23 @@ async fn handle_cluster_node_registration<E: EthSpec>(
             .await?,
         );
 
-        // let keypairs = vec![];
-        // let validator_public_keys = vec![];
-        // let shared_public_keys = vec![];
-        // let encrypted_shared_private_keys = vec![];
+        let count: u64 = validatorCount.try_into().unwrap();
         let threshold = *THRESHOLD_MAP
             .get(&(op_ids.len() as u64))
             .ok_or(format!("unkown number of operator committees"))? as usize;
-        for i in 0..count {
+        
+        // send data to cluster node
+        let (tx, rx) = oneshot::channel();
+        if clusterNodePublicKey.len() != 33 {
+            return Err(format!("unkown cluster node public key {}", clusterNodePublicKey.len()));
+        }
+        let cluster_node_public_key = SecpPublicKey(clusterNodePublicKey.as_ref().try_into().unwrap());
+        sender.send((cluster_node_public_key, tx)).await.unwrap();
+        let addr = rx.await.unwrap().ok_or(format!("failed to find the socket address of cluster node {}", cluster_node_public_key.base64()))?;
+
+        for _i in 0..count {
             let dkg = DKGMalicious::new(config.operator_id as u64, io.clone(), threshold);
-            let (keypair, validator_public_key, shared_public_key) = dkg
+            let (keypair, validator_public_key, shared_public_keys) = dkg
                 .run()
                 .await
                 .map_err(|e| format!("run dkg failed {:?}", e))?;
@@ -920,14 +952,14 @@ async fn handle_cluster_node_registration<E: EthSpec>(
                     .encrypt(shared_secret_key.as_bytes(), &config.node_secret.name)
                     .map_err(|_e| format!("elgamal encrypt shared secret failed "))?
                     .to_bytes();
-                hex::encode(encrypted_shared_secret_key)
+                encrypted_shared_secret_key
             };
-
+            let shared_public_key = keypair.pk.clone();
             let signer = SimpleDistributedSigner::new(
                 config.operator_id as u64,
                 keypair,
-                validator_public_key,
-                shared_public_key,
+                validator_public_key.clone(),
+                shared_public_keys,
                 io.clone(),
                 threshold,
             );
@@ -939,9 +971,123 @@ async fn handle_cluster_node_registration<E: EthSpec>(
                 &config.beacon_nodes,
             )
             .await?;
+
+            let request = tonic::Request::new(ValidatorGenerationRequest {
+                operator_id: config.operator_id,
+                operator_public_key: config.node_secret.name.0.to_vec(),
+                validator_public_key: validator_public_key.serialize().to_vec(),
+                encrypted_shared_key: encrypted_shared_private_key,
+                shared_public_key: shared_public_key.serialize().to_vec(),
+                deposti_data: serde_json::to_string(&deposit_data).unwrap(),
+                signature: None,
+                transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec()
+            });
+            let mut client = GrpcClient::new(Endpoint::from_shared(format!("http://{}", addr.to_string())).unwrap().connect_lazy());
+            match timeout(RPC_REQUEST_TIMEOUT.clone(), client.validator_generation(request)).await {
+                Ok(r) => {
+                    match r {
+                        Ok(_) => {
+                            info!(
+                                logger,
+                                "send validator key generation request";
+                                "validator key" => %validator_public_key
+                            );
+                        },
+                        Err(e) => {
+                            error!(
+                                logger,
+                                "send validator key generation request failed";
+                                "validator key" => %validator_public_key,
+                                "error" => %e
+                            );
+                        } 
+                    }
+                }
+                Err(_) => {
+                    error!(
+                        logger,
+                        "send validator key generation request failed";
+                        "validator key" => %validator_public_key
+                    );
+                }
+            }
         }
-        
     }
+    Ok(())
+}
+
+
+async fn handle_validator_exit<E: EthSpec>(
+    log: &Log,
+    logger: &Logger,
+    config: &Config,
+    validator_client: &ValidatorClientHttpClient,
+    executor: &TaskExecutor,
+    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>
+) -> Result<(), String>  {
+    let SafeStakeClusterNode::ValidatorExitDataGeneration{
+        validatorPubKeys,
+        activeEpoch,
+        ..  
+    } = log.log_decode().map_err(|e| e.to_string())?.inner.data;
+    for validator_public_key in validatorPubKeys {
+        let validator_public_key = PublicKey::deserialize(validator_public_key.as_ref())
+        .map_err(|_| format!("failed to deserialize validator public key"))?;
+
+        let operator_committee_definition_path = default_operator_committee_definition_path(
+            &validator_public_key,
+            &config.validator_dir,
+        );
+        let epoch: u64 = activeEpoch.try_into().unwrap();
+        if operator_committee_definition_path.exists() {
+            let (message, signature, voluntary_exit) = local_sign_voluntary_exit::<E>(&validator_public_key, &config.beacon_nodes, &validator_client, Epoch::from(epoch)).await?;
+            let _ = store_sender.send((message, signature.clone(), validator_public_key.clone())).await;
+            info!(
+                logger,
+                "validator voluntary exit";
+                "message" => %message,
+                "epoch" => %epoch
+            );
+
+            let def = OperatorCommitteeDefinition::from_file(operator_committee_definition_path).map_err(|e| {
+                format!("failed to parse operator committee def {:?}", e)
+            })?;
+
+            let pos = def.operator_ids.iter().position(|x| *x == config.operator_id).unwrap();
+            let operator_shared_public = def.operator_public_keys[pos].clone();
+            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone());
+            
+            committee.add_operator(
+                config.operator_id,
+                Box::new(LocalOperator {
+                    operator_id: config.operator_id,
+                    share_public_key: operator_shared_public,
+                }),
+            );
+
+            match committee.sign(
+                message,
+                signature,
+                executor
+            ).await {
+                Ok((signature, _)) => {
+                    let signed_voluntary_exit = SignedVoluntaryExit {
+                        message: voluntary_exit,
+                        signature: signature,
+                    };
+                    post_signed_voluntary_exit::<E>(signed_voluntary_exit, &config.beacon_nodes).await?;
+                },
+                Err(e) => {
+                    error!(
+                        logger, 
+                        "distributed voluntary exit";
+                        "error" => format!("{:?}", e),
+                    );
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -975,6 +1121,61 @@ async fn qeury_block_timestamp(provider: &P, block_number: u64) -> u64 {
             1733916250
         }
     }
+}
+
+async fn post_signed_voluntary_exit<E: EthSpec>(
+    signed_voluntary_exit: SignedVoluntaryExit,
+    beacon_nodes_urls: &Vec<SensitiveUrl>,
+) -> Result<(), String> {
+    let spec = E::default_spec();
+    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
+    client.post_beacon_pool_voluntary_exits(&signed_voluntary_exit).await.map_err(|e| {
+        format!("failde to post voluntary exist {:?}", e)
+    })
+}
+
+pub async fn local_sign_voluntary_exit<E: EthSpec>(
+    validator_public_key: &PublicKey,
+    beacon_nodes_urls: &Vec<SensitiveUrl>,
+    validator_client: &ValidatorClientHttpClient,
+    epoch: Epoch
+) -> Result<(Hash256, Signature, VoluntaryExit), String> {
+    let spec = E::default_spec();
+    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
+    let genesis_data = client
+        .get_beacon_genesis()
+        .await
+        .map_err(|e| {
+            format!("Failed to get beacon genesis data {:?}", e)
+        })?
+        .data;
+    let validator_index = get_validator_index_for_exit(&client, &validator_public_key, epoch, &spec).await?;
+    let fork = get_beacon_state_fork(&client).await?;
+    let voluntary_exit = VoluntaryExit {
+        epoch,
+        validator_index,
+    };
+    let domain = spec.get_domain(
+        epoch,
+        Domain::VoluntaryExit,
+        &fork,
+        genesis_data.genesis_validators_root,
+    );
+    let message = voluntary_exit.signing_root(domain);
+
+    let signature = validator_client.post_keypair_sign(&validator_public_key.compress(), message)
+    .await
+    .map_err(|_| {
+        format!(
+            "unkown validator public key {}",
+            validator_public_key
+        )
+    })?
+    .ok_or(format!(
+        "unkown validator public key {}",
+        validator_public_key
+    ))?;
+    Ok((message, signature, voluntary_exit))
 }
 
 /// Refer to `/lighthouse/common/deposit_contract/src/lib.rs`

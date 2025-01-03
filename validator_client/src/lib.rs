@@ -216,14 +216,14 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             })?;
         ContractService::set_validators_fee_recipient(&config.safestake_config, &safestake_database, &mut validator_defs).await?;
 
-        let (sender, recv) = tokio::sync::mpsc::channel(1000);
+        let (store_sender, recv) = tokio::sync::mpsc::channel(1000);
 
         let validators = InitializedValidators::from_definitions(
             validator_defs,
             config.validator_dir.clone(),
             config.initialized_validators.clone(),
             log.clone(),
-            Some(sender)
+            Some(store_sender.clone())
         )
         .await
         .map_err(|e| {
@@ -531,9 +531,6 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             .runtime_context(context.service_context("attestation".into()))
             .build()?;
 
-        //
-        
-
         let preparation_service = PreparationServiceBuilder::new()
             .slot_clock(slot_clock.clone())
             .validator_store(validator_store.clone())
@@ -580,7 +577,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             safestake_database.clone(),
             &context.executor,
             sender,
-            validator_keys.clone()
+            validator_keys.clone(),
+            store_sender
         )
         .await;
 

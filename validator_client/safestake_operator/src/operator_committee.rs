@@ -124,7 +124,6 @@ impl TOperatorCommittee for DvfOperatorCommittee {
     fn get_leader_id(&self, nonce: u64) -> u32 {
         let validator_id = convert_validator_public_key_to_id(&self.validator_public_key.serialize());
         let index = (nonce + validator_id) % self.operators.len() as u64;
-        
         let mut ids: Vec<u32> = self.operators.keys().map(|k| *k).collect();
         ids.sort();
         ids[index as usize]
