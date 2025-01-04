@@ -31,6 +31,10 @@ use tokio::time::timeout;
 use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, Signature as SecpSignature,
 };
+use std::sync::Arc;
+use std::collections::HashMap;
+use parking_lot::RwLock;
+use tonic::transport::Channel;
 
 pub const DISCOVERY_PORT_OFFSET: u16 = 4;
 
@@ -208,7 +212,8 @@ impl DiscoveryService {
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         executor: &TaskExecutor,
         self_operator_id: u32, 
-        http_port: u16
+        http_port: u16,
+        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
     ) {
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 2));
         executor.spawn(
@@ -255,6 +260,11 @@ impl DiscoveryService {
                                     );
                                     committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
+                                    if let Some(addr) = queried_addr {
+                                        operator_channels.write().insert(committee_def.operator_ids[i], Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                                        .unwrap()
+                                        .connect_lazy());
+                                    }
                                 }
                             }
                         }

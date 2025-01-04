@@ -29,7 +29,7 @@ use safestake_database::SafeStakeDatabase;
 use safestake_operator::report::status_report;
 use safestake_service::contract_service::ContractService;
 use safestake_service::discovery_service::DiscoveryService;
-use safestake_service::operator_service::{SafestakeService, get_validator_keys};
+use safestake_service::operator_service::{SafestakeService, get_validator_keys, get_channels};
 use slog::{debug, error, info, warn, Logger};
 use slot_clock::SlotClock;
 use slot_clock::SystemTimeSlotClock;
@@ -205,6 +205,7 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
         }
 
         let validator_keys = Arc::new(RwLock::new(get_validator_keys(&validator_defs)?));
+        let operator_channels = Arc::new(RwLock::new(get_channels(&validator_defs, &config.safestake_config)?));
 
         let safestake_database_path = config.validator_dir.join(DVF_DATABASE_PATH);
         let safestake_database = SafeStakeDatabase::open_or_create(&safestake_database_path)
@@ -223,7 +224,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             config.validator_dir.clone(),
             config.initialized_validators.clone(),
             log.clone(),
-            Some(store_sender.clone())
+            Some(store_sender.clone()),
+            operator_channels.clone()
         )
         .await
         .map_err(|e| {
@@ -565,7 +567,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             sender.clone(),
             &context.executor,
             config.safestake_config.operator_id,
-            config.safestake_config.http_api_port
+            config.safestake_config.http_api_port,
+            operator_channels.clone()
         );
 
         ContractService::preparation(&config.safestake_config, &safestake_database).await?;
@@ -578,7 +581,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             &context.executor,
             sender,
             validator_keys.clone(),
-            store_sender
+            store_sender,
+            operator_channels
         )
         .await;
 

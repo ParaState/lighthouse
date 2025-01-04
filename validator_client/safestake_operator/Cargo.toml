@@ -23,6 +23,7 @@ task_executor = { workspace = true }
 tokio = { workspace = true }
 types = { workspace = true }
 validator_metrics = { workspace = true }
+parking_lot = { workspace = true }
 
 alloy-primitives = "0.8.13"
 async-trait = "0.1.83"

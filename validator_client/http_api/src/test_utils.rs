@@ -19,6 +19,7 @@ use parking_lot::RwLock;
 use sensitive_url::SensitiveUrl;
 use slashing_protection::{SlashingDatabase, SLASHING_PROTECTION_FILENAME};
 use slot_clock::{SlotClock, TestingSlotClock};
+use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr};
@@ -82,6 +83,7 @@ impl ApiTester {
             Default::default(),
             log.clone(),
             None,
+            Arc::new(RwLock::new(HashMap::new()))
         )
         .await
         .unwrap();

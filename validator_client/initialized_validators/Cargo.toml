@@ -27,3 +27,4 @@ validator_metrics = { workspace = true }
 
 eth2_keystore_share = { workspace = true }
 safestake_operator = { workspace = true }
+tonic = "0.11"

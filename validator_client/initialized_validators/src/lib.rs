@@ -45,6 +45,8 @@ use safestake_operator::{
     generic_operator_committee::TOperatorCommittee, operator_committee::DvfOperatorCommittee,
     LocalOperator,
 };
+use tonic::transport::Channel;
+use parking_lot::RwLock;
 
 /// Default timeout for a request to a remote signer for a signature.
 ///
@@ -256,6 +258,7 @@ impl InitializedValidator {
         config: &Config,
         log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
+        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
     ) -> Result<Self, Error> {
         if !def.enabled {
             return Err(Error::UnableToInitializeDisabledValidator);
@@ -463,7 +466,7 @@ impl InitializedValidator {
                 let validator_public_key = committee_def.validator_public_key.clone();
                 let local_operator_id = operator_id;
                 let mut committee =
-                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, log);
+                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, log, operator_channels);
                 committee.add_operator(
                     local_operator_id,
                     Box::new(LocalOperator {
@@ -630,6 +633,7 @@ pub struct InitializedValidators {
     log: Logger,
     config: Config,
     store_sender: Sender<(Hash256, Signature, PublicKey)>,
+    operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
 }
 
 impl InitializedValidators {
@@ -640,6 +644,7 @@ impl InitializedValidators {
         config: Config,
         log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
+        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>, 
     ) -> Result<Self, Error> {
         let mut this = Self {
             validators_dir,
@@ -649,6 +654,7 @@ impl InitializedValidators {
             config,
             log,
             store_sender: store_sender.unwrap(),
+            operator_channels
         };
         this.update_validators().await?;
         Ok(this)
@@ -1446,6 +1452,7 @@ impl InitializedValidators {
                             &self.config,
                             self.log.clone(),
                             None,
+                            self.operator_channels.clone()
                         )
                         .await
                         {
@@ -1499,6 +1506,7 @@ impl InitializedValidators {
                             &self.config,
                             self.log.clone(),
                             None,
+                            self.operator_channels.clone()
                         )
                         .await
                         {
@@ -1550,6 +1558,7 @@ impl InitializedValidators {
                             &self.config,
                             self.log.clone(),
                             Some(self.store_sender.clone()),
+                            self.operator_channels.clone()
                         )
                         .await
                         {

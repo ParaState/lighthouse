@@ -50,7 +50,7 @@ use safestake_operator::proto::{
 use safestake_operator::proto::grpc_client::GrpcClient;
 use safestake_operator::RPC_REQUEST_TIMEOUT;
 use tokio::time::timeout;
-use tonic::transport::Endpoint;
+use tonic::transport::{Channel, Endpoint};
 
 sol!(
     #[allow(missing_docs)]
@@ -335,7 +335,8 @@ impl ContractService {
         executor: &TaskExecutor,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
-        store_sender: mpsc::Sender<(Hash256, Signature, PublicKey)>
+        store_sender: mpsc::Sender<(Hash256, Signature, PublicKey)>,
+        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
     ) {
         let provider: P =
             ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
@@ -410,7 +411,8 @@ impl ContractService {
                                             &client,
                                             &validator_keys,
                                             &executor_,
-                                            &store_sender
+                                            &store_sender,
+                                            &operator_channels
                                         )
                                         .await
                                         {
@@ -550,7 +552,8 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     client: &ValidatorClientHttpClient,
     validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
     executor: &TaskExecutor,
-    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>
+    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>,
+    operator_channels: &Arc<RwLock<HashMap<u32, Channel>>>
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
@@ -562,7 +565,8 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
                 db,
                 sender,
                 client,
-                validator_keys
+                validator_keys,
+                operator_channels
             )
             .await?;
         }
@@ -576,7 +580,7 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             handle_validator_key_generation::<E>(log, logger, config, db, sender).await?;
         }
         Some(&VALIDATOR_EXIT_DATA_GENERATION) => {
-            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender).await?;
+            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender, operator_channels).await?;
         }
         _ => {}
     };
@@ -591,7 +595,8 @@ async fn handle_validator_registration(
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
-    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>
+    validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
+    operator_channels: &Arc<RwLock<HashMap<u32, Channel>>>
 ) -> Result<(), String> {
     let SafeStakeNetwork::ValidatorRegistration {
         _0,
@@ -714,6 +719,18 @@ async fn handle_validator_registration(
             &validator_public_key,
             config.validator_dir.clone(),
         );
+        
+        for i in 0..def.total as usize {
+            let mut operator_channel = operator_channels.write();
+            if !operator_channel.contains_key(&def.operator_ids[i]) {
+                if let Some(addr) = def.base_socket_addresses[i] {
+                    operator_channel.insert(def.operator_ids[i], Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                    .unwrap()
+                    .connect_lazy());
+                }
+            }
+        }
+
         def.to_file(committee_def_path.clone())
             .map_err(|e| format!("failed to save committee definition: {:?}", e))?;
     
@@ -1023,7 +1040,8 @@ async fn handle_validator_exit<E: EthSpec>(
     config: &Config,
     validator_client: &ValidatorClientHttpClient,
     executor: &TaskExecutor,
-    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>
+    store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>,
+    operator_channels: &Arc<RwLock<HashMap<u32, Channel>>>
 ) -> Result<(), String>  {
     let SafeStakeClusterNode::ValidatorExitDataGeneration{
         validatorPubKeys,
@@ -1055,7 +1073,7 @@ async fn handle_validator_exit<E: EthSpec>(
 
             let pos = def.operator_ids.iter().position(|x| *x == config.operator_id).unwrap();
             let operator_shared_public = def.operator_public_keys[pos].clone();
-            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone());
+            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone(), operator_channels.clone());
             
             committee.add_operator(
                 config.operator_id,

@@ -12,6 +12,8 @@ use safestake_operator::proto::{
 use signing_method::SignableMessage;
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slog::{error, info, Logger};
+use tonic::transport::Channel;
+use tonic::transport::Endpoint;
 use std::sync::Arc;
 use store::{KeyValueStore, LevelDB};
 use task_executor::TaskExecutor;
@@ -28,6 +30,10 @@ use account_utils::validator_definitions::{ValidatorDefinitions, SigningDefiniti
 use std::collections::HashMap;
 use eth2_keystore_share::KeystoreShare;
 use validator_dir::insecure_keys::INSECURE_PASSWORD;
+use account_utils::default_operator_committee_definition_path;
+use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
+use crate::config::Config;
+
 pub struct SafestakeService<E: EthSpec> {
     logger: Logger,
     store: Arc<LevelDB<E>>,
@@ -429,6 +435,9 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
 
 #[tokio::test]
 async fn test_query_validator() {
+    use eth2::lighthouse_vc::http_client::ValidatorClientHttpClient;
+    use crate::SensitiveUrl;
+    use validator_http_api::ApiSecret;
     use std::path::Path;
     let api_secret = ApiSecret::create_or_open(&Path::new("/home/jiangyi/.lighthouse/v1/holesky/validators")).unwrap();
     let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", 5062)).unwrap();
@@ -465,4 +474,30 @@ pub fn get_validator_keys(validator_defs: &ValidatorDefinitions) -> Result<HashM
         }
     }
     Ok(validator_secretkey)
+}
+
+pub fn get_channels(validator_defs: &ValidatorDefinitions, config: &Config) -> Result<HashMap<u32, Channel>, String> {
+    let mut channels = HashMap::new();
+    for validator_def in validator_defs.as_slice() {
+        let operator_committee_definition_path = default_operator_committee_definition_path(
+            &validator_def.voting_public_key,
+            &config.validator_dir,
+        );
+        let def = OperatorCommitteeDefinition::from_file(operator_committee_definition_path).map_err(|e| {
+            format!("failed to parse operator committee def {:?}", e)
+        })?;
+
+        for i in 0..def.total as usize {
+            if def.operator_ids[i] != config.operator_id {
+                if !channels.contains_key(&def.operator_ids[i]) {
+                    if let Some(addr) = def.base_socket_addresses[i] {
+                        channels.insert(def.operator_ids[i], Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                        .unwrap()
+                        .connect_lazy());
+                    }
+                }
+            }   
+        }
+    }
+    Ok(channels)
 }

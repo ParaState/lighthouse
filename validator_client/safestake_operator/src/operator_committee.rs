@@ -14,6 +14,9 @@ use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use tonic::transport::Endpoint;
 use types::{AttestationData, Hash256, PublicKey, Signature};
+use std::sync::Arc;
+use parking_lot::RwLock;
+use tonic::transport::Channel;
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -151,6 +154,7 @@ impl DvfOperatorCommittee {
         operator_id: u32,
         def: OperatorCommitteeDefinition,
         log: Logger,
+        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
     ) -> Self {
         let node_secret_key = NODE_SECRET.get().unwrap();
         let mut committee = Self::new(
@@ -162,7 +166,12 @@ impl DvfOperatorCommittee {
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
-
+            let channel = match operator_channels.read().get(&def.operator_ids[i]) {
+                Some(c) => c.clone(),
+                None => Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                .unwrap()
+                .connect_lazy()
+            };
             let operator = RemoteOperator {
                 self_operator_secretkey: node_secret_key.clone(),
                 self_operator_id: operator_id,
@@ -172,9 +181,7 @@ impl DvfOperatorCommittee {
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
-                channel: Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                    .unwrap()
-                    .connect_lazy(),
+                channel: channel,
             };
             committee.add_operator(def.operator_ids[i], Box::new(operator));
         }
