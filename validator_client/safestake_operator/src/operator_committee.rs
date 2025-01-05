@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::prelude::{DateTime, Utc};
 use dvf_utils::{invalid_addr, DvfError};
 use futures::future::join_all;
+use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
 use slog::Logger;
 use std::collections::HashMap;
@@ -17,6 +18,7 @@ use types::{AttestationData, Hash256, PublicKey, Signature};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tonic::transport::Channel;
+use crate::CHANNEL_SIZE;
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -154,7 +156,7 @@ impl DvfOperatorCommittee {
         operator_id: u32,
         def: OperatorCommitteeDefinition,
         log: Logger,
-        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
+        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
     ) -> Self {
         let node_secret_key = NODE_SECRET.get().unwrap();
         let mut committee = Self::new(
@@ -167,7 +169,11 @@ impl DvfOperatorCommittee {
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
             let channel = match operator_channels.read().get(&def.operator_ids[i]) {
-                Some(c) => c.clone(),
+                Some(c) => {
+                    let mut rng = rand::thread_rng();
+                    let random_index: usize = rng.next_u64() as usize;
+                    c[random_index % CHANNEL_SIZE].clone()
+                },
                 None => Endpoint::from_shared(format!("http://{}", addr.to_string()))
                 .unwrap()
                 .connect_lazy()

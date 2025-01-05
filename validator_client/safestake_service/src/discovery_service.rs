@@ -14,6 +14,7 @@ use lighthouse_network::discv5::{
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
+use safestake_operator::CHANNEL_SIZE;
 use sensitive_url::SensitiveUrl;
 use slog::{error, info, Logger};
 use std::fs::File;
@@ -213,9 +214,9 @@ impl DiscoveryService {
         executor: &TaskExecutor,
         self_operator_id: u32, 
         http_port: u16,
-        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
+        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
     ) {
-        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 2));
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 30));
         executor.spawn(
             async move {
                 let api_secret = ApiSecret::create_or_open(&validator_dir).unwrap();
@@ -261,9 +262,13 @@ impl DiscoveryService {
                                     committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
                                     if let Some(addr) = queried_addr {
-                                        operator_channels.write().insert(committee_def.operator_ids[i], Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                                        .unwrap()
-                                        .connect_lazy());
+                                        let mut c = vec![];
+                                        for _i in 0..CHANNEL_SIZE {
+                                            c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                                            .unwrap()
+                                            .connect_lazy());
+                                        }
+                                        operator_channels.write().insert(committee_def.operator_ids[i], c);
                                     }
                                 }
                             }

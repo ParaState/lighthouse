@@ -258,7 +258,7 @@ impl InitializedValidator {
         config: &Config,
         log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
-        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
+        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
     ) -> Result<Self, Error> {
         if !def.enabled {
             return Err(Error::UnableToInitializeDisabledValidator);
@@ -633,7 +633,7 @@ pub struct InitializedValidators {
     log: Logger,
     config: Config,
     store_sender: Sender<(Hash256, Signature, PublicKey)>,
-    operator_channels: Arc<RwLock<HashMap<u32, Channel>>>
+    operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
 }
 
 impl InitializedValidators {
@@ -644,7 +644,7 @@ impl InitializedValidators {
         config: Config,
         log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
-        operator_channels: Arc<RwLock<HashMap<u32, Channel>>>, 
+        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
     ) -> Result<Self, Error> {
         let mut this = Self {
             validators_dir,

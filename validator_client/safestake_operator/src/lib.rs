@@ -24,6 +24,8 @@ use tonic::transport::Channel;
 use types::{graffiti::GraffitiString, AttestationData, PublicKey};
 use types::{Hash256, Signature};
 
+pub const CHANNEL_SIZE: usize = 12;
+
 lazy_static! {
     pub static ref THRESHOLD_MAP: HashMap<u64, u64> = {
         let mut threshold_map = HashMap::new();

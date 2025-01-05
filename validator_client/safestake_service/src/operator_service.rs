@@ -33,6 +33,7 @@ use validator_dir::insecure_keys::INSECURE_PASSWORD;
 use account_utils::default_operator_committee_definition_path;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use crate::config::Config;
+use safestake_operator::CHANNEL_SIZE;
 
 pub struct SafestakeService<E: EthSpec> {
     logger: Logger,
@@ -476,7 +477,7 @@ pub fn get_validator_keys(validator_defs: &ValidatorDefinitions) -> Result<HashM
     Ok(validator_secretkey)
 }
 
-pub fn get_channels(validator_defs: &ValidatorDefinitions, config: &Config) -> Result<HashMap<u32, Channel>, String> {
+pub fn get_channels(validator_defs: &ValidatorDefinitions, config: &Config) -> Result<HashMap<u32, Vec<Channel>>, String> {
     let mut channels = HashMap::new();
     for validator_def in validator_defs.as_slice() {
         let operator_committee_definition_path = default_operator_committee_definition_path(
@@ -486,14 +487,18 @@ pub fn get_channels(validator_defs: &ValidatorDefinitions, config: &Config) -> R
         let def = OperatorCommitteeDefinition::from_file(operator_committee_definition_path).map_err(|e| {
             format!("failed to parse operator committee def {:?}", e)
         })?;
-
+        
         for i in 0..def.total as usize {
             if def.operator_ids[i] != config.operator_id {
                 if !channels.contains_key(&def.operator_ids[i]) {
                     if let Some(addr) = def.base_socket_addresses[i] {
-                        channels.insert(def.operator_ids[i], Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                        .unwrap()
-                        .connect_lazy());
+                        let mut c = vec![];
+                        for _i in 0..CHANNEL_SIZE {
+                            c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                            .unwrap()
+                            .connect_lazy());
+                        }
+                        channels.insert(def.operator_ids[i], c);
                     }
                 }
             }   
