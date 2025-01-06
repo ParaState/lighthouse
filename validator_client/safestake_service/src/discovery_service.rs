@@ -11,6 +11,7 @@ use lighthouse_network::discv5::{
     enr::{CombinedKey, Enr, EnrPublicKey, NodeId},
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
+use rand::RngCore;
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
@@ -242,7 +243,7 @@ impl DiscoveryService {
                             if committee_def.operator_ids[i] == self_operator_id {
                                 continue;
                             }
-                            if !remote_op_is_active(&logger, committee_def.operator_ids[i], &committee_def.base_socket_addresses[i], &committee_def.node_public_keys[i], &committee_def.validator_public_key).await {
+                            if !remote_op_is_active(&logger, committee_def.operator_ids[i], &committee_def.base_socket_addresses[i], &committee_def.node_public_keys[i], &committee_def.validator_public_key, &operator_channels).await {
                                 let (tx, rx) = oneshot::channel();
                                 sender.send((committee_def.node_public_keys[i].clone(), tx))
                                 .await
@@ -341,12 +342,19 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
     }
 }
 
-async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<SocketAddr>, node_public_key: &SecpPublicKey, validator_public_key: &PublicKey) -> bool {
+async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<SocketAddr>, node_public_key: &SecpPublicKey, validator_public_key: &PublicKey, operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>) -> bool {
     if addr.is_none() {
         return false;
     }
-    let channel = Endpoint::from_shared(format!("http://{}", addr.unwrap().to_string())).unwrap()
-                                .connect_lazy();
+    let channel = match operator_channels.read().get(&operator_id) {
+        None => Endpoint::from_shared(format!("http://{}", addr.unwrap().to_string())).unwrap()
+        .connect_lazy(),
+        Some(c) => {
+            let mut rng = rand::thread_rng();
+            let random_index  = rng.next_u64() as usize % CHANNEL_SIZE;
+            c[random_index].clone()
+        }
+    };
     let mut client = SafestakeClient::new(channel);
     let random_hash = Hash256::random();
     let request = tonic::Request::new(CheckLivenessRequest {
