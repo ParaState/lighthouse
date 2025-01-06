@@ -49,6 +49,8 @@ impl<E: EthSpec> SafestakeService<E> {
         executor.spawn(
             async move {
                 Server::builder()
+                    .initial_connection_window_size(Some(16 * 1024 * 1024))
+                    .initial_stream_window_size(Some(2 * 1024 * 1024))
                     .add_service(SafestakeServer::new(operator_service))
                     .serve(addr)
                     .await
