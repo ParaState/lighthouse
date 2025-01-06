@@ -49,7 +49,7 @@ use safestake_operator::proto::{
 };
 use safestake_operator::proto::grpc_client::GrpcClient;
 use safestake_operator::{CHANNEL_SIZE, RPC_REQUEST_TIMEOUT};
-use tokio::time::timeout;
+use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
 
 sol!(
@@ -1004,13 +1004,13 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec()
             });
             let mut client = GrpcClient::new(Endpoint::from_shared(format!("http://{}", addr.to_string())).unwrap().connect_lazy());
-            match timeout(RPC_REQUEST_TIMEOUT.clone(), client.validator_generation(request)).await {
-                Ok(r) => {
-                    match r {
+            tokio::select! {
+                result = client.validator_generation(request) => {
+                    match result {
                         Ok(_) => {
                             info!(
                                 logger,
-                                "send validator key generation request";
+                                "sent validator key generation request";
                                 "validator key" => %validator_public_key
                             );
                         },
@@ -1021,10 +1021,10 @@ async fn handle_validator_key_generation<E: EthSpec>(
                                 "validator key" => %validator_public_key,
                                 "error" => %e
                             );
-                        } 
+                        }
                     }
-                }
-                Err(_) => {
+                },
+                _ = sleep(RPC_REQUEST_TIMEOUT) => {
                     error!(
                         logger,
                         "send validator key generation request failed";

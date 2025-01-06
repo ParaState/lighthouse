@@ -16,10 +16,9 @@ use slog::{error, info, Logger};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::thread::sleep;
+use tokio::time::sleep;
 use std::time::Duration;
 use tokio::sync::OnceCell;
-use tokio::time::timeout;
 use tonic::transport::Channel;
 use types::{graffiti::GraffitiString, AttestationData, PublicKey};
 use types::{Hash256, Signature};
@@ -39,7 +38,7 @@ lazy_static! {
 
 pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();
 pub static SAFESTAKE_API: OnceCell<String> = OnceCell::const_new();
-pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(1200);
+pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(1500);
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
     SignatureNotFound(String),
@@ -141,14 +140,23 @@ impl TOperator for RemoteOperator {
                 msg: msg.0.to_vec(),
                 validator_public_key: self.validator_public_key.serialize().to_vec(),
             });
-            match timeout(RPC_REQUEST_TIMEOUT.clone(), client.get_signature(request)).await {
-                Ok(Ok(response)) => {
-                    return Ok(Signature::deserialize(&response.into_inner().signature).unwrap());
+            tokio::select! {
+                result = client.get_signature(request) => {
+                    match result {
+                        Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
+                        Err(_) => {
+                            sleep(Duration::from_millis(200)).await;
+                        },
+                    }
                 },
-                _ => {
-                    sleep(Duration::from_millis(200));
-                    continue;
-                },
+                _ = sleep(RPC_REQUEST_TIMEOUT) => {
+                    error!(
+                        self.logger,
+                        "operator get signature timeout";
+                        "operator" => self.operator_id,
+                        "socket address" => self.base_address
+                    );
+                }
             }
         }
         Err(DvfError::SignatureNotFound(format!("{} not found", msg)))
@@ -162,45 +170,33 @@ impl TOperator for RemoteOperator {
             msg: random_hash.0.to_vec(),
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
-        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.check_liveness(request)).await {
-            Ok(Ok(_)) => {
-                // match bincode::deserialize::<SecpSignature>(&response.into_inner().signature) {
-                //             Ok(_) => {
-                //                 info!(
-                //                     self.logger,
-                //                     "operator liveness";
-                //                     "operator" => self.operator_id
-                //                 );
-                //                 return true;
-                //             }
-                //             Err(_) => {}
-                //         }
-                //     }
-                //     Err(_) => {}
-                // }
-                info!(
-                    self.logger,
-                    "operator liveness";
-                    "operator" => self.operator_id
-                );
-            }
-            Ok(Err(e)) => {
-                error!(
-                    self.logger,
-                    "operator liveness error";
-                    "error" => %e
-                );
-            }
-            Err(_) => {
+
+        tokio::select! {
+            result = client.check_liveness(request) => {
+                match result {
+                    Ok(_) => {
+                        info!(
+                            self.logger,
+                            "operator liveness";
+                            "operator" => self.operator_id
+                        );
+                        return true;
+                    },
+                    Err(_) => {
+                        return false;
+                    },
+                }
+            },
+            _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
                     self.logger,
                     "operator liveness timeout";
                     "operator" => self.operator_id,
                     "socket address" => self.base_address
                 );
+                return false;
             }
         }
-        false
     }
 
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
@@ -218,22 +214,26 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.attest_data(request)).await {
-            Ok(Ok(resp)) => {
-                info!(
-                    self.logger,
-                    "remote attestation";
-                    "response" => %resp.into_inner().msg
-                );
-            }
-            Ok(Err(e)) => {
-                error!(
-                    self.logger,
-                    "remote attestation error";
-                    "error" => %e
-                );
-            }
-            Err(_) => {
+        tokio::select! {
+            result = client.attest_data(request) => {
+                match result {
+                    Ok(resp) => {
+                        info!(
+                            self.logger,
+                            "remote attestation";
+                            "response" => %resp.into_inner().msg
+                        );
+                    },
+                    Err(e) => {
+                        error!(
+                            self.logger,
+                            "remote attestation error";
+                            "error" => %e
+                        );
+                    },
+                }
+            },
+            _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
                     self.logger,
                     "remote attestation timeout";
@@ -257,9 +257,9 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.propose_full_block(request)).await {
-            Ok(r) => {
-                match r {
+        tokio::select! {
+            result = client.propose_full_block(request) => {
+                match result {
                     Ok(_) => {
                         info!(
                             self.logger,
@@ -273,11 +273,10 @@ impl TOperator for RemoteOperator {
                             "remote proposal full block error";
                             "error" => %e
                         );
-                    } 
+                    },
                 }
-                
-            }
-            Err(_) => {
+            },
+            _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
                     self.logger,
                     "remote proposal full block timeout";
@@ -301,9 +300,9 @@ impl TOperator for RemoteOperator {
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
-        match timeout(RPC_REQUEST_TIMEOUT.clone(), client.propose_blinded_block(request)).await {
-            Ok(r) => {
-                match r {
+        tokio::select! {
+            result = client.propose_blinded_block(request) => {
+                match result {
                     Ok(_) => {
                         info!(
                             self.logger,
@@ -317,11 +316,10 @@ impl TOperator for RemoteOperator {
                             "remote proposal blinded block error";
                             "error" => %e
                         );
-                    } 
+                    }
                 }
-                
-            }
-            Err(_) => {
+            },
+            _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
                     self.logger,
                     "remote proposal blinded block timeout";

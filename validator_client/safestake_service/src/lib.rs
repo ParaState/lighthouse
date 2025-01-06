@@ -2,6 +2,8 @@ pub mod config;
 pub mod contract_service;
 pub mod discovery_service;
 pub mod operator_service;
+// pub mod liveness_service;
+
 use types::{PublicKey, Epoch, Fork};
 use eth2::{BeaconNodeHttpClient, Timeouts, types::{ValidatorStatus, ValidatorData, StateId, ValidatorId }};
 use sensitive_url::SensitiveUrl;
@@ -9,7 +11,7 @@ use std::time::Duration;
 use types::ChainSpec;
 use safe_arith::SafeArith;
 use alloy_primitives::Address;
-use slot_clock::{SlotClock, SystemTimeSlotClock};
+use slot_clock::SlotClock;
 /// Gets syncing status from beacon node client and returns true if syncing and false otherwise.
 async fn is_syncing(client: &BeaconNodeHttpClient) -> Result<bool, String> {
     Ok(client
