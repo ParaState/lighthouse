@@ -392,6 +392,10 @@ impl ContractService {
                             match provider.get_logs(&filter).await {
                                 Ok(mut logs) => {
                                     logs.sort_by_key(|log| log.block_number.unwrap());
+                                    if logs.len() == 0 {
+                                        record.block_num =
+                                        std::cmp::min(current_block, target_block + 1);
+                                    }
                                     for log in logs {
                                         let log_block_num = log.block_number.unwrap();
                                         // query block timestamp
@@ -400,6 +404,7 @@ impl ContractService {
                                             log_block_num,
                                         )
                                         .await;
+                                        record.block_num = log_block_num + 1;
                                         if let Err(e) = handle_events(
                                             &log,
                                             &logger,
@@ -420,8 +425,6 @@ impl ContractService {
                                             continue;
                                         }
                                     }
-                                    record.block_num =
-                                        std::cmp::min(current_block + 1, target_block + 1);
                                     let _ = record.to_file(&config.contract_record_path);
                                 }
                                 Err(e) => {
