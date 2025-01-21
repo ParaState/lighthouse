@@ -8,7 +8,7 @@ message ValidatorGenerationRequest {
     bytes validator_public_key = 3;
     bytes encrypted_shared_key = 4;
     bytes shared_public_key = 5;
-    string deposti_data = 6;
+    string deposit_data = 6;
     optional bytes signature = 7;
     bytes transaction_hash = 8;
 }

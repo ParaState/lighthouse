@@ -44,14 +44,14 @@ pub enum DvfError {
 /// Changing this might essentially have the effect of cleaning all data.
 pub const ROOT_VERSION: u64 = 1;
 /// Up to 1 million
-pub const MAJOR_VERSION: u64 = 3;
+pub const MAJOR_VERSION: u64 = 4;
 /// Up to 1 million
-pub const MINOR_VERSION: u64 = 5;
+pub const MINOR_VERSION: u64 = 0;
 
 pub static VERSION: u64 =
     ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + MINOR_VERSION;
 
-pub const SOFTWARE_MINOR_VERSION: u64 = 5;
+pub const SOFTWARE_MINOR_VERSION: u64 = 0;
 pub static SOFTWARE_VERSION: u64 =
     ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + SOFTWARE_MINOR_VERSION;
 

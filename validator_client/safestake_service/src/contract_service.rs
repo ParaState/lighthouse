@@ -1002,7 +1002,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 validator_public_key: validator_public_key.serialize().to_vec(),
                 encrypted_shared_key: encrypted_shared_private_key,
                 shared_public_key: shared_public_key.serialize().to_vec(),
-                deposti_data: serde_json::to_string(&deposit_data).unwrap(),
+                deposit_data: serde_json::to_string(&deposit_data).unwrap(),
                 signature: None,
                 transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec()
             });
