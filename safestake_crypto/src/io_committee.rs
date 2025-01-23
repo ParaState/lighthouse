@@ -166,7 +166,7 @@ impl ConnectionManager {
                     return Some(channel);
                 }
                 Err(_e) => {
-                    warn!(logger, "[DKG-IO]"; "party" => party, "failed to connect, retry" => retry);
+                    warn!(logger, "[DKG-IO]"; "error" => format!("party {}, failed to connect, retry {}", party, retry));
                     sleep(Duration::from_millis(delay)).await;
 
                     // Wait an increasing delay before attempting to reconnect.
