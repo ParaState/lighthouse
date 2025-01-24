@@ -135,7 +135,7 @@ type P = RootProvider<T>;
 type SafeStakeRegistryContract = SafeStakeRegistry::SafeStakeRegistryInstance<T, P>;
 type SafeStakeNetworkContract = SafeStakeNetwork::SafeStakeNetworkInstance<T, P>;
 type SafeStakeConfigContract = SafeStakeConfig::SafeStakeConfigInstance<T, P>;
-type SafeStakeClusterNodeContract = SafeStakeClusterNode::SafeStakeClusterNodeInstance<T, P>;
+// type SafeStakeClusterNodeContract = SafeStakeClusterNode::SafeStakeClusterNodeInstance<T, P>;
 
 const VALIDATOR_REGISTRATION_TOPIC: alloy_primitives::FixedBytes<32> =
     SafeStakeNetwork::ValidatorRegistration::SIGNATURE_HASH;
@@ -930,7 +930,9 @@ async fn handle_validator_key_generation<E: EthSpec>(
             sender.send((public_key.clone(), tx)).await.unwrap();
             let addr = rx.await.unwrap();
             match addr {
-                Some(a) => socket_addresses.push(a),
+                Some(a) => {
+                    socket_addresses.push(SocketAddr::new(a.ip(), a.port() + DKG_PORT_OFFSET))
+                },
                 None => {
                     return Err(format!("failed to find the socket address of {}", public_key.base64()));
                 }

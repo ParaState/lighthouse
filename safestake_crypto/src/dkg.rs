@@ -900,9 +900,10 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use types::Hash256;
+    use slog::Drain;
 
     const T: usize = 3;
-    const IDS: [u64; 4] = [1, 2, 3, 4];
+    const IDS: [u64; 4] = [14, 15, 16, 12];
 
     fn verify_dkg_results(results: HashMap<u64, (Keypair, PublicKey, HashMap<u64, PublicKey>)>) {
         // Verify master public keys
@@ -973,13 +974,17 @@ mod tests {
         
         // Use dkg to generate secret-shared keys
         let futs = (0..IDS.len()).map(|i| async move {
+            let decorator = slog_term::TermDecorator::new().build();
+            let drain = slog_term::FullFormat::new(decorator).build().fuse();
+            let drain = slog_async::Async::new(drain).build().fuse();
+
             let logger = slog::Logger::root(
-                slog::Discard,
+                drain,
                 slog::o!("key1" => "value1", "key2" => "value2"),
-           );
+            );
             let io = &Arc::new(
                 NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice(), logger.clone())
-                    .await,
+                    .await.unwrap()
             );
             let dkg = DKGSemiHonest::new(IDS[i], io.clone(), T);
             let result = dkg.run().await;
@@ -1025,7 +1030,7 @@ mod tests {
                     addrs_ref.as_slice(),
                     logger.clone()
                 )
-                .await,
+                .await.unwrap(),
             );
             let dkg = DKGMalicious::new(IDS[i], io.clone(), T);
             let result = dkg.run().await;
@@ -1071,7 +1076,7 @@ mod tests {
            );
             let io = &Arc::new(
                 NetIOCommittee::new(IDS[i], ports_ref[i], IDS.as_slice(), addrs_ref.as_slice(), logger)
-                    .await,
+                    .await.unwrap(),
             );
             let dkg = DKGSemiHonest::new(IDS[i], io.clone(), T);
             let (kp, mpk, pks) = dkg.run().await?;
@@ -1094,5 +1099,43 @@ mod tests {
                 "Signature verification failed"
             );
         }
+    }
+
+
+    #[tokio::test]
+    async fn test_dkg_single() {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+
+        let logger = slog::Logger::root(
+            drain,
+            slog::o!("key1" => "value1", "key2" => "value2"),
+        );
+        
+        let i = 3;
+        
+        let ports: Vec<u16> = IDS.iter().map(|id| (25000 + *id) as u16).collect();
+        let addrs: Vec<SocketAddr> = ports
+            .iter()
+            .map(|port| SocketAddr::new("127.0.0.1".parse().unwrap(), *port))
+            .collect();
+        let ports_ref = &ports;
+        let addrs_ref = &addrs;
+        let io = &Arc::new(
+            SecureNetIOCommittee::new(
+                IDS[i],
+                ports_ref[i],
+                IDS.as_slice(),
+                addrs_ref.as_slice(),
+                logger.clone()
+            )
+            .await.unwrap(),
+        );
+        
+        let dkg = DKGMalicious::new(IDS[i], io.clone(), 3);
+        let result = dkg.run().await.unwrap();
+        println!("{:?}", result); 
+
     }
 }

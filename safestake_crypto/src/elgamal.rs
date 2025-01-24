@@ -126,6 +126,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::{Ciphertext, Elgamal};
     use aes_gcm::aead::Aead;
     use aes_gcm::KeyInit;
@@ -164,7 +165,8 @@ mod tests {
 
         let mut elgamal = Elgamal::new(rng);
         let (sk, pk) = elgamal.generate_key();
-        let ct = elgamal.encrypt("hello".as_bytes(), &pk).unwrap();
+        let secp_pk = SecpPublicKey(pk.serialize());
+        let ct = elgamal.encrypt("hello".as_bytes(), &secp_pk).unwrap();
 
         let ct_bytes = ct.to_bytes();
         println!("ct {}", ct_bytes.len());

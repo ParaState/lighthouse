@@ -569,7 +569,7 @@ mod tests {
     use crate::io_committee::SecureNetIOCommittee;
     use futures::future::join_all;
 
-    const IDS: [u64; 4] = [1, 2, 3, 4];
+    const IDS: [u64; 4] = [1, 2, 4, 3];
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_net_committee() {
@@ -595,7 +595,7 @@ mod tests {
                     addrs_ref.as_slice(),
                     logger,
                 )
-                .await,
+                .await.unwrap(),
             );
             io.broadcast(Bytes::copy_from_slice(
                 format!("hello from {}", IDS[i]).as_bytes(),
