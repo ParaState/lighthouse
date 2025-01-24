@@ -993,7 +993,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
             let deposit_data = get_distributed_deposit::<SecureNetIOCommittee, SecureNetIOChannel, E>(
                 &signer,
                 withdrawAddress,
-                depositAmount.try_into().unwrap(),
+                32_000_000_000,
                 &config.beacon_nodes,
             )
             .await?;
