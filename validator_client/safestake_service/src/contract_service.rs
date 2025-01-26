@@ -966,7 +966,6 @@ async fn handle_validator_key_generation<E: EthSpec>(
         let cluster_node_public_key = SecpPublicKey(clusterNodePublicKey.as_ref().try_into().unwrap());
         sender.send((cluster_node_public_key, tx)).await.unwrap();
         let addr = rx.await.unwrap().ok_or(format!("failed to find the socket address of cluster node {}", cluster_node_public_key.base64()))?;
-        let spec = E::default_spec();
         for _i in 0..count {
             let dkg = DKGMalicious::new(config.operator_id as u64, io.clone(), threshold);
             let (keypair, validator_public_key, shared_public_keys) = dkg
@@ -993,7 +992,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 threshold,
             );
 
-            let deposit_data = get_distributed_deposit::<SecureNetIOCommittee, SecureNetIOChannel, E>(
+            let (deposit_data, fork_version) = get_distributed_deposit::<SecureNetIOCommittee, SecureNetIOChannel, E>(
                 &signer,
                 withdrawAddress,
                 32_000_000_000,
@@ -1015,11 +1014,8 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 withdrawal_credentials,
                 amount,
                 signature,
-                fork_version: spec.genesis_fork_version,
-                network_name: spec
-                    .config_name
-                    .clone()
-                    .ok_or("The network specification does not have a CONFIG_NAME set")?,
+                fork_version: fork_version,
+                network_name: config.network.clone(),
                 deposit_message_root,
                 deposit_data_root,
                 deposit_cli_version: format!("SafeSake Operator v{}.{}", dvf_utils::MAJOR_VERSION, dvf_utils::MINOR_VERSION),
@@ -1237,7 +1233,7 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
     withdraw_address: Address,
     amount: u64,
     beacon_nodes_urls: &Vec<SensitiveUrl>,
-) -> Result<DepositData, String> {
+) -> Result<(DepositData, [u8; 4]), String> {
     let withdrawal_credentials = convert_address_to_withdraw_crendentials(withdraw_address);
     let mut deposit_data = DepositData {
         pubkey: PublicKeyBytes::from(signer.mpk()),
@@ -1265,7 +1261,7 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
     })?;
     deposit_data.signature = SignatureBytes::from(sig);
 
-    Ok(deposit_data)
+    Ok((deposit_data, genesis_data.genesis_fork_version.clone()))
 }
 
 

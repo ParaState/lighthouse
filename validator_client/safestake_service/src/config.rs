@@ -11,6 +11,7 @@ use sensitive_url::SensitiveUrl;
 /// Stores the core configuration for this validator instance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    pub network: String,
     pub operator_id: u32,
     pub safestake_api: String,
     pub node_secret: Secret,
@@ -41,6 +42,7 @@ impl Default for Config {
         let store_path = base_dir.join(DVF_STORE_PATH);
         let contract_record_path = base_dir.join(DVF_CONTRACT_BLOCK_PATH);
         Config {
+            network: DEFAULT_HARDCODED_NETWORK.to_string(),
             operator_id: 0,
             safestake_api: String::new(),
             node_secret: Secret::new(),

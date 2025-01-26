@@ -483,7 +483,7 @@ impl Config {
             .unwrap();
 
         config.safestake_config.node_secret = secret;
-
+        config.safestake_config.network = get_network(cli_args);
         // store
         config.safestake_config.store_path = default_root_dir
             .join(get_network_dir(cli_args))
@@ -514,6 +514,18 @@ impl Config {
         config.safestake_config.beacon_nodes = config.beacon_nodes.clone();
         Ok(config)
     }
+}
+
+/// Gets the network directory name
+///
+/// Tries to get the name first from the "network" flag,
+/// if not present, then checks the "testnet-dir" flag and returns a custom name
+/// If neither flags are present, returns the default hardcoded network name.
+pub fn get_network(matches: &ArgMatches) -> String {
+    if let Some(network_name) = matches.get_one::<String>("network") {
+        return network_name.to_string();
+    }
+    panic!("network parameter must provided")
 }
 
 #[cfg(test)]
