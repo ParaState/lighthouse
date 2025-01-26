@@ -8442,9 +8442,11 @@ dependencies = [
  "task_executor",
  "tokio",
  "tonic",
+ "tree_hash",
  "types",
  "validator_dir",
  "validator_http_api",
+ "validator_manager",
  "validator_store",
  "warp_utils",
 ]

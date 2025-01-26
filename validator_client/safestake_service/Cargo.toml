@@ -39,6 +39,8 @@ validator_http_api = { workspace = true }
 sensitive_url = { workspace = true }
 eth2 ={ workspace = true }
 safe_arith = { workspace = true }
+tree_hash = { workspace = true }
+validator_manager = { path = "../../validator_manager" }
 alloy-contract = "0.6.4"
 alloy-primitives = "0.8.13"
 alloy-provider = "0.6.4"

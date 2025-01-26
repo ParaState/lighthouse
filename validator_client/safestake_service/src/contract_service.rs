@@ -51,7 +51,8 @@ use safestake_operator::proto::grpc_client::GrpcClient;
 use safestake_operator::{CHANNEL_SIZE, RPC_REQUEST_TIMEOUT};
 use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
-
+use tree_hash::TreeHash;
+use validator_manager::common::StandardDepositDataJson;
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -373,9 +374,11 @@ impl ContractService {
                     match provider.get_block_number().await {
                         Ok(current_block) => {
                             let target_block = record.block_num + 10000;
+                            let from_block = record.block_num;
+                            let to_block = std::cmp::min(current_block, target_block);
                             let filter = Filter::new()
-                                .from_block(record.block_num)
-                                .to_block(std::cmp::min(current_block, target_block))
+                                .from_block(from_block)
+                                .to_block(to_block)
                                 .address(vec![
                                     registry_address,
                                     network_address,
@@ -389,6 +392,7 @@ impl ContractService {
                                     VALIDATOR_KEYS_GENERATION,
                                     VALIDATOR_EXIT_DATA_GENERATION
                                 ]);
+                            
                             match provider.get_logs(&filter).await {
                                 Ok(mut logs) => {
                                     logs.sort_by_key(|log| log.block_number.unwrap());
@@ -422,13 +426,12 @@ impl ContractService {
                                         .await
                                         {
                                             warn!(logger, "process events"; "error reason" => e);
-                                            continue;
                                         }
                                     }
                                     let _ = record.to_file(&config.contract_record_path);
                                 }
                                 Err(e) => {
-                                    warn!(logger, "contract service"; "rpc error" => e.to_string());
+                                    warn!(logger, "contract service"; "rpc error" => format!("{}, from block: {}, to block {}", e, from_block, to_block));
                                 }
                             }
                         }
@@ -963,7 +966,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
         let cluster_node_public_key = SecpPublicKey(clusterNodePublicKey.as_ref().try_into().unwrap());
         sender.send((cluster_node_public_key, tx)).await.unwrap();
         let addr = rx.await.unwrap().ok_or(format!("failed to find the socket address of cluster node {}", cluster_node_public_key.base64()))?;
-
+        let spec = E::default_spec();
         for _i in 0..count {
             let dkg = DKGMalicious::new(config.operator_id as u64, io.clone(), threshold);
             let (keypair, validator_public_key, shared_public_keys) = dkg
@@ -998,13 +1001,36 @@ async fn handle_validator_key_generation<E: EthSpec>(
             )
             .await?;
 
+            let deposit_message_root = deposit_data.as_deposit_message().tree_hash_root();
+            let deposit_data_root = deposit_data.tree_hash_root();
+            let DepositData {
+                pubkey,
+                withdrawal_credentials,
+                amount,
+                signature,
+            } = deposit_data;
+            
+            let deposit_json = StandardDepositDataJson {
+                pubkey,
+                withdrawal_credentials,
+                amount,
+                signature,
+                fork_version: spec.genesis_fork_version,
+                network_name: spec
+                    .config_name
+                    .clone()
+                    .ok_or("The network specification does not have a CONFIG_NAME set")?,
+                deposit_message_root,
+                deposit_data_root,
+                deposit_cli_version: format!("SafeSake Operator v{}.{}", dvf_utils::MAJOR_VERSION, dvf_utils::MINOR_VERSION),
+            };
             let request = tonic::Request::new(ValidatorGenerationRequest {
                 operator_id: config.operator_id,
                 operator_public_key: config.node_secret.name.0.to_vec(),
                 validator_public_key: validator_public_key.serialize().to_vec(),
                 encrypted_shared_key: encrypted_shared_private_key,
                 shared_public_key: shared_public_key.serialize().to_vec(),
-                deposit_data: serde_json::to_string(&deposit_data).unwrap(),
+                deposit_data: serde_json::to_string(&deposit_json).unwrap(),
                 signature: None,
                 transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec()
             });
@@ -1402,4 +1428,21 @@ async fn test_rpc_operator_id() {
             .map_err(|e| e.to_string()).unwrap();
     let last_id: u64 = _0.try_into().unwrap();
     println!("{:?}", last_id )
+}
+
+
+#[tokio::test]
+async fn test_dkg_decrypt() {
+    use safestake_crypto::secp::SecretKey;
+    let cipher = hex::decode("0x023ce3107d2b6816215b67d9fd07503cb62d9f9866343da1410ed78b49cec4e2151aa873635c6e4448f83808da841a51d97493dac89f39f5a3e924bf3c9c5be184660875e8bc481d5bccdb078bbc7ce06544c49004333a0718f3b72c53").unwrap();
+    let op14 = "w9uByreY9bigSHX1924mTL3R7pozKwv63lQMTLrj6yc=";
+    let op12 = "M0HfYi1bh1KfYgL3remcg05pkWZOosj/yLyLnqCuDvI=";
+    let op15 = "1PMjGlG6dXah9F1CENEWJAPVnZQrzBCFC7BYN8epfsQ=";
+    let op16 = "UpvU4OpxMqRuNjIgcZOyTlsigjtsshQBwJVIQEEXeaA=";
+    let secret = SecretKey::decode_base64(op15).unwrap();
+    let rng = rand::thread_rng();
+    let mut elgamal = Elgamal::new(rng);
+    let ciphertext = Ciphertext::from_bytes(&cipher);
+    let plain_shared_key = elgamal.decrypt(&ciphertext, &secret).unwrap();
+
 }
