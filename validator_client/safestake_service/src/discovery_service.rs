@@ -237,7 +237,10 @@ impl DiscoveryService {
                             validator_dir.clone(),
                         );
                         let mut committee_def =
-                            OperatorCommitteeDefinition::from_file(&committee_def_path).unwrap();
+                            match OperatorCommitteeDefinition::from_file(&committee_def_path) {
+                                Ok(def) => def,
+                                Err(_) => continue
+                            };
                         let mut restart = false;
                         for i in 0..committee_def.total as usize {
                             if committee_def.operator_ids[i] == self_operator_id {
