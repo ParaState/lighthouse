@@ -15,7 +15,7 @@ use slog::{error, info, Logger};
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 use std::sync::Arc;
-use store::{KeyValueStore, LevelDB};
+use store::{database::leveldb_impl::LevelDB, DBColumn};
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc::Receiver;
 use tonic::transport::Server;
@@ -77,10 +77,11 @@ impl<E: EthSpec> SafestakeService<E> {
         };
         let store_fut = async move {
             loop {
-                if let Some((msg, signature, validator_public_key)) = rx.recv().await {
+                if let Some((msg, signature, _validator_public_key)) = rx.recv().await {
                     info!(log, "local sign"; "signing root" => %hex::encode(msg));
                     let _ = store.put_bytes(
-                        &validator_public_key.as_hex_string(),
+                        DBColumn::SafeStake,
+                        // &validator_public_key.as_hex_string(),
                         &msg.0,
                         &signature.serialize(),
                     );
@@ -201,7 +202,8 @@ impl<E: EthSpec> SafestakeService<E> {
 
                     self.store
                         .put_bytes(
-                            &validator_public_key.as_hex_string(),
+                            DBColumn::SafeStake,
+                            // &validator_public_key.as_hex_string(),
                             &signing_root.0,
                             &serialized_signature,
                         )
@@ -256,7 +258,10 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             .await?;
         let signature = self
             .store
-            .get_bytes(&format!("0x{}", hex::encode(&req.validator_public_key)), &req.msg)
+            .get_bytes(
+                DBColumn::SafeStake,
+                // &format!("0x{}", hex::encode(&req.validator_public_key)), 
+                &req.msg)
             .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
         if let Some(signature) = signature {
             Ok(Response::new(GetSignatureResponse { signature }))
@@ -308,7 +313,8 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
                 let serialized_signature = sig.serialize();
                 self.store
                     .put_bytes(
-                        &format!("0x{}", hex::encode(req.validator_public_key)),
+                        // &format!("0x{}", hex::encode(req.validator_public_key)),
+                        DBColumn::SafeStake,
                         &signing_root.0,
                         &serialized_signature,
                     )

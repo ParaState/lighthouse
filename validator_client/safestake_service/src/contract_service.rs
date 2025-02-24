@@ -362,7 +362,7 @@ impl ContractService {
         let cluster_address = config.cluster_contract.parse::<Address>().unwrap();
         let mut query_interval = tokio::time::interval(Duration::from_secs(3));
 
-        let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
+        let api_secret = ApiSecret::create_or_open(&config.validator_dir.join("api-token.txt")).unwrap();
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", config.http_api_port)).unwrap();
         let api_pubkey = api_secret.api_token();
         let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
@@ -459,7 +459,7 @@ impl ContractService {
             provider.clone(),
         );
         let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 3));
-        let api_secret = ApiSecret::create_or_open(&config.validator_dir).unwrap();
+        let api_secret = ApiSecret::create_or_open(&config.validator_dir.join("api-token.txt")).unwrap();
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", config.http_api_port)).unwrap();
         let api_pubkey = api_secret.api_token();
         let client = ValidatorClientHttpClient::new(url.clone(), api_pubkey).unwrap();
