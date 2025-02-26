@@ -94,6 +94,8 @@ pub struct ChainConfig {
     /// The delay in milliseconds applied by the node between sending each blob or data column batch.
     /// This doesn't apply if the node is the block proposer.
     pub blob_publication_batch_interval: Duration,
+    pub disable_attesting: bool,
+    pub sync_tolerance_epochs: u64,
 }
 
 impl Default for ChainConfig {
@@ -129,6 +131,8 @@ impl Default for ChainConfig {
             enable_sampling: false,
             blob_publication_batches: 4,
             blob_publication_batch_interval: Duration::from_millis(300),
+            disable_attesting: false,
+            sync_tolerance_epochs: 16,
         }
     }
 }

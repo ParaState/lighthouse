@@ -720,6 +720,40 @@ fn builder_user_agent() {
     );
 }
 
+#[test]
+fn test_builder_disable_ssz_flag() {
+    run_payload_builder_flag_test_with_config(
+        "builder",
+        "http://meow.cats",
+        None,
+        None,
+        |config| {
+            assert!(
+                !config
+                    .execution_layer
+                    .as_ref()
+                    .unwrap()
+                    .disable_builder_ssz_requests,
+            );
+        },
+    );
+    run_payload_builder_flag_test_with_config(
+        "builder",
+        "http://meow.cats",
+        Some("builder-disable-ssz"),
+        None,
+        |config| {
+            assert!(
+                config
+                    .execution_layer
+                    .as_ref()
+                    .unwrap()
+                    .disable_builder_ssz_requests,
+            );
+        },
+    );
+}
+
 fn run_jwt_optional_flags_test(jwt_flag: &str, jwt_id_flag: &str, jwt_version_flag: &str) {
     use sensitive_url::SensitiveUrl;
 
@@ -2542,6 +2576,16 @@ fn light_client_http_server_disabled() {
             assert!(!config.http_api.enable_light_client_server);
             assert!(!config.network.enable_light_client_server);
             assert!(!config.chain.enable_light_client_server);
+        });
+}
+
+#[test]
+fn disable_attesting() {
+    CommandLineTest::new()
+        .flag("disable-attesting", None)
+        .run_with_zero_port()
+        .with_config(|config| {
+            assert!(config.chain.disable_attesting);
         });
 }
 

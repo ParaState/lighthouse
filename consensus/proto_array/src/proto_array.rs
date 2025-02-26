@@ -531,15 +531,7 @@ impl ProtoArray {
                 || latest_valid_ancestor_is_descendant
             {
                 match &node.execution_status {
-                    // It's illegal for an execution client to declare that some previously-valid block
-                    // is now invalid. This is a consensus failure on their behalf.
-                    ExecutionStatus::Valid(hash) => {
-                        return Err(Error::ValidExecutionStatusBecameInvalid {
-                            block_root: node.root,
-                            payload_block_hash: *hash,
-                        })
-                    }
-                    ExecutionStatus::Optimistic(hash) => {
+                    ExecutionStatus::Valid(hash) | ExecutionStatus::Optimistic(hash) => {
                         invalidated_indices.insert(index);
                         node.execution_status = ExecutionStatus::Invalid(*hash);
 
@@ -597,13 +589,9 @@ impl ProtoArray {
             if let Some(parent_index) = node.parent {
                 if invalidated_indices.contains(&parent_index) {
                     match &node.execution_status {
-                        ExecutionStatus::Valid(hash) => {
-                            return Err(Error::ValidExecutionStatusBecameInvalid {
-                                block_root: node.root,
-                                payload_block_hash: *hash,
-                            })
-                        }
-                        ExecutionStatus::Optimistic(hash) | ExecutionStatus::Invalid(hash) => {
+                        ExecutionStatus::Valid(hash)
+                        | ExecutionStatus::Optimistic(hash)
+                        | ExecutionStatus::Invalid(hash) => {
                             node.execution_status = ExecutionStatus::Invalid(*hash)
                         }
                         ExecutionStatus::Irrelevant(_) => {

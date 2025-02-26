@@ -2,7 +2,9 @@ use clap::ArgMatches;
 use clap_utils::{parse_optional, parse_required};
 use environment::Environment;
 use eth2::{
-    types::{BlockId, ChainSpec, ForkName, PublishBlockRequest, SignedBlockContents},
+    types::{
+        BlockId, BroadcastValidation, ChainSpec, ForkName, PublishBlockRequest, SignedBlockContents,
+    },
     BeaconNodeHttpClient, Error, SensitiveUrl, Timeouts,
 };
 use eth2_network_config::Eth2NetworkConfig;
@@ -85,7 +87,10 @@ pub async fn run_async<T: EthSpec>(
     // 2. Apply blocks to target.
     for (slot, block) in blocks.iter().rev() {
         println!("posting block at slot {slot}");
-        if let Err(e) = target.post_beacon_blocks(block).await {
+        if let Err(e) = target
+            .post_beacon_blocks_v2(block, Some(BroadcastValidation::Consensus))
+            .await
+        {
             if let Error::ServerMessage(ref e) = e {
                 if e.code == 202 {
                     println!("duplicate block detected while posting block at slot {slot}");
@@ -115,7 +120,7 @@ async fn get_block_from_source<T: EthSpec>(
         let mut f = File::open(&cache_path).unwrap();
         let mut bytes = vec![];
         f.read_to_end(&mut bytes).unwrap();
-        PublishBlockRequest::from_ssz_bytes(&bytes, ForkName::Deneb).unwrap()
+        PublishBlockRequest::from_ssz_bytes(&bytes, ForkName::Electra).unwrap()
     } else {
         let block_from_source = source
             .get_beacon_blocks_ssz::<T>(block_id, spec)

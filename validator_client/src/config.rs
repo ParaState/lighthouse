@@ -96,6 +96,7 @@ pub struct Config {
     pub initialized_validators: InitializedValidatorsConfig,
     /// Configuration for Safestake
     pub safestake_config: SafeStakeConfig,
+    pub disable_attesting: bool,
 }
 
 impl Default for Config {
@@ -138,6 +139,7 @@ impl Default for Config {
             distributed: false,
             initialized_validators: <_>::default(),
             safestake_config: <_>::default(),
+            disable_attesting: false,
         }
     }
 }
@@ -467,6 +469,8 @@ impl Config {
         info!(log, "read rpc-url"; "rpc-url" => &config.safestake_config.rpc_url);
 
         config.safestake_config.beacon_nodes = config.beacon_nodes.clone();
+        config.disable_attesting = validator_client_config.disable_attesting;
+
         Ok(config)
     }
 }

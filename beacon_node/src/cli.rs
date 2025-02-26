@@ -554,6 +554,22 @@ pub fn cli_app() -> Command {
                 .display_order(0)
         )
         .arg(
+            Arg::new("disable-attesting")
+                .long("disable-attesting")
+                .help("Turn off attestation related APIs so that we have some hope of producing \
+                       blocks")
+                .action(ArgAction::SetTrue)
+                .display_order(0)
+        )
+        .arg(
+            Arg::new("sync-tolerance-epochs")
+            .long("sync-tolerance-epochs")
+            .help("If the beacon node is within this many epochs from the head, we declare it to \
+                   be synced regardless of the network sync state")
+            .action(ArgAction::Set)
+            .display_order(0)
+        )
+        .arg(
             Arg::new("http-sse-capacity-multiplier")
                 .long("http-sse-capacity-multiplier")
                 .requires("enable_http")
@@ -1458,6 +1474,15 @@ pub fn cli_app() -> Command {
                        default is Lighthouse's version string.")
                 .requires("builder")
                 .action(ArgAction::Set)
+                .display_order(0)
+        )
+        .arg(
+            Arg::new("builder-disable-ssz")
+                .long("builder-disable-ssz")
+                .value_name("BOOLEAN")
+                .help("Disables sending requests using SSZ over the builder API.")
+                .requires("builder")
+                .action(ArgAction::SetTrue)
                 .display_order(0)
         )
         .arg(
