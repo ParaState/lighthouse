@@ -42,7 +42,7 @@ use crate::light_client_optimistic_update_verification::{
     Error as LightClientOptimisticUpdateError, VerifiedLightClientOptimisticUpdate,
 };
 use crate::light_client_server_cache::LightClientServerCache;
-use crate::migrate::BackgroundMigrator;
+use crate::migrate::{BackgroundMigrator, ManualFinalizationNotification};
 use crate::naive_aggregation_pool::{
     AggregatedAttestationMap, Error as NaiveAggregationError, NaiveAggregationPool,
     SyncContributionAggregateMap,
@@ -118,8 +118,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use store::iter::{BlockRootsIterator, ParentRootBlockIterator, StateRootsIterator};
 use store::{
-    BlobSidecarListFromRoot, DatabaseBlock, Error as DBError, HotColdDB, KeyValueStore,
-    KeyValueStoreOp, StoreItem, StoreOp,
+    BlobSidecarListFromRoot, DatabaseBlock, Error as DBError, HotColdDB, HotStateSummary,
+    KeyValueStore, KeyValueStoreOp, StoreItem, StoreOp,
 };
 use task_executor::{ShutdownReason, TaskExecutor};
 use tokio::sync::oneshot;
@@ -821,7 +821,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             .get_blinded_block(&block_root)?
             .ok_or(Error::MissingBeaconBlock(block_root))?;
         let state = self
-            .get_state(&block.state_root(), Some(block.slot()))?
+            .get_state(&block.state_root(), Some(block.slot()), true)?
             .ok_or_else(|| Error::MissingBeaconState(block.state_root()))?;
         let iter = BlockRootsIterator::owned(&self.store, state);
         Ok(std::iter::once(Ok((block_root, block.slot())))
@@ -1348,8 +1348,9 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         &self,
         state_root: &Hash256,
         slot: Option<Slot>,
+        update_cache: bool,
     ) -> Result<Option<BeaconState<T::EthSpec>>, Error> {
-        Ok(self.store.get_state(state_root, slot)?)
+        Ok(self.store.get_state(state_root, slot, update_cache)?)
     }
 
     /// Return the sync committee at `slot + 1` from the canonical chain.
@@ -1524,8 +1525,9 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     })?
                     .ok_or(Error::NoStateForSlot(slot))?;
 
+                // Since this slot is less than the current head, don't cache the state
                 Ok(self
-                    .get_state(&state_root, Some(slot))?
+                    .get_state(&state_root, Some(slot), false)?
                     .ok_or(Error::NoStateForSlot(slot))?)
             }
         }
@@ -1705,6 +1707,45 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     .ok_or(Error::AttestationCommitteeIndexNotSet)?,
             ),
         }
+    }
+
+    pub fn manually_compact_database(&self) {
+        self.store_migrator.process_manual_compaction();
+    }
+
+    pub fn manually_finalize_state(
+        &self,
+        state_root: Hash256,
+        checkpoint: Checkpoint,
+    ) -> Result<(), Error> {
+        let HotStateSummary {
+            slot,
+            latest_block_root,
+            ..
+        } = self
+            .store
+            .load_hot_state_summary(&state_root)
+            .map_err(BeaconChainError::DBError)?
+            .ok_or(BeaconChainError::MissingHotStateSummary(state_root))?;
+
+        if slot != checkpoint.epoch.start_slot(T::EthSpec::slots_per_epoch())
+            || latest_block_root != *checkpoint.root
+        {
+            return Err(BeaconChainError::InvalidCheckpoint {
+                state_root,
+                checkpoint,
+            });
+        }
+
+        let notif = ManualFinalizationNotification {
+            state_root: state_root.into(),
+            checkpoint,
+            head_tracker: self.head_tracker.clone(),
+            genesis_block_root: self.genesis_block_root,
+        };
+
+        self.store_migrator.process_manual_finalization(notif);
+        Ok(())
     }
 
     /// Returns an aggregated `Attestation`, if any, that has a matching `attestation.data`.
@@ -6908,7 +6949,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
             let mut beacon_state = self
                 .store
-                .get_state(&beacon_state_root, Some(beacon_block.slot()))?
+                .get_state(&beacon_state_root, Some(beacon_block.slot()), true)?
                 .ok_or_else(|| {
                     Error::DBInconsistent(format!("Missing state {:?}", beacon_state_root))
                 })?;
@@ -7061,7 +7102,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                 if signed_beacon_block.slot() % T::EthSpec::slots_per_epoch() == 0 {
                     let block = self.get_blinded_block(&block_hash).unwrap().unwrap();
                     let state = self
-                        .get_state(&block.state_root(), Some(block.slot()))
+                        .get_state(&block.state_root(), Some(block.slot()), true)
                         .unwrap()
                         .unwrap();
                     finalized_blocks.insert(state.finalized_checkpoint().root);
@@ -7281,6 +7322,31 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         }
 
         Ok(None)
+    }
+
+    /// Retrieves block roots (in ascending slot order) within some slot range from fork choice.
+    pub fn block_roots_from_fork_choice(&self, start_slot: u64, count: u64) -> Vec<Hash256> {
+        let head_block_root = self.canonical_head.cached_head().head_block_root();
+        let fork_choice_read_lock = self.canonical_head.fork_choice_read_lock();
+        let block_roots_iter = fork_choice_read_lock
+            .proto_array()
+            .iter_block_roots(&head_block_root);
+        let end_slot = start_slot.saturating_add(count);
+        let mut roots = vec![];
+
+        for (root, slot) in block_roots_iter {
+            if slot < end_slot && slot >= start_slot {
+                roots.push(root);
+            }
+            if slot < start_slot {
+                break;
+            }
+        }
+
+        drop(fork_choice_read_lock);
+        // return in ascending slot order
+        roots.reverse();
+        roots
     }
 }
 

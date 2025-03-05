@@ -53,7 +53,7 @@ use eth2::types::{
 use eth2::{CONSENSUS_VERSION_HEADER, CONTENT_TYPE_HEADER, SSZ_CONTENT_TYPE_HEADER};
 use health_metrics::observe::Observe;
 use lighthouse_network::rpc::methods::MetaData;
-use lighthouse_network::{types::SyncState, EnrExt, NetworkGlobals, PeerId, PubsubMessage};
+use lighthouse_network::{types::SyncState, Enr, EnrExt, NetworkGlobals, PeerId, PubsubMessage};
 use lighthouse_version::version_with_platform;
 use logging::SSELoggingComponents;
 use network::{NetworkMessage, NetworkSenders, ValidatorSubscriptionMessage};
@@ -72,6 +72,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use sysinfo::{System, SystemExt};
 use system_health::{observe_nat, observe_system_health_bn};
@@ -86,11 +87,11 @@ use tokio_stream::{
 };
 use types::{
     fork_versioned_response::EmptyMetadata, Attestation, AttestationData, AttestationShufflingId,
-    AttesterSlashing, BeaconStateError, ChainSpec, CommitteeCache, ConfigAndPreset, Epoch, EthSpec,
-    ForkName, ForkVersionedResponse, Hash256, ProposerPreparationData, ProposerSlashing,
-    RelativeEpoch, SignedAggregateAndProof, SignedBlindedBeaconBlock, SignedBlsToExecutionChange,
-    SignedContributionAndProof, SignedValidatorRegistrationData, SignedVoluntaryExit, Slot,
-    SyncCommitteeMessage, SyncContributionData,
+    AttesterSlashing, BeaconStateError, ChainSpec, Checkpoint, CommitteeCache, ConfigAndPreset,
+    Epoch, EthSpec, ForkName, ForkVersionedResponse, Hash256, ProposerPreparationData,
+    ProposerSlashing, RelativeEpoch, SignedAggregateAndProof, SignedBlindedBeaconBlock,
+    SignedBlsToExecutionChange, SignedContributionAndProof, SignedValidatorRegistrationData,
+    SignedVoluntaryExit, Slot, SyncCommitteeMessage, SyncContributionData,
 };
 use validator::pubkey_to_validator_index;
 use version::{
@@ -3700,7 +3701,7 @@ pub fn serve<T: BeaconChainTypes>(
         .and(task_spawner_filter.clone())
         .and(chain_filter.clone())
         .and(warp_utils::json::json())
-        .and(network_tx_filter)
+        .and(network_tx_filter.clone())
         .and(log_filter.clone())
         .then(
             |not_synced_filter: Result<(), Rejection>,
@@ -4133,6 +4134,86 @@ pub fn serve<T: BeaconChainTypes>(
             },
         );
 
+    // POST lighthouse/finalize
+    let post_lighthouse_finalize = warp::path("lighthouse")
+        .and(warp::path("finalize"))
+        .and(warp::path::end())
+        .and(warp_utils::json::json())
+        .and(task_spawner_filter.clone())
+        .and(chain_filter.clone())
+        .then(
+            |request_data: api_types::ManualFinalizationRequestData,
+             task_spawner: TaskSpawner<T::EthSpec>,
+             chain: Arc<BeaconChain<T>>| {
+                task_spawner.blocking_json_task(Priority::P0, move || {
+                    let checkpoint = Checkpoint {
+                        epoch: request_data.epoch,
+                        root: request_data.block_root,
+                    };
+
+                    chain
+                        .manually_finalize_state(request_data.state_root, checkpoint)
+                        .map(|_| api_types::GenericResponse::from(request_data))
+                        .map_err(|e| {
+                            warp_utils::reject::custom_bad_request(format!(
+                                "Failed to finalize state due to error: {e:?}"
+                            ))
+                        })
+                })
+            },
+        );
+
+    // POST lighthouse/compaction
+    let post_lighthouse_compaction = warp::path("lighthouse")
+        .and(warp::path("compaction"))
+        .and(warp::path::end())
+        .and(task_spawner_filter.clone())
+        .and(chain_filter.clone())
+        .then(
+            |task_spawner: TaskSpawner<T::EthSpec>, chain: Arc<BeaconChain<T>>| {
+                task_spawner.blocking_json_task(Priority::P0, move || {
+                    chain.manually_compact_database();
+                    Ok(api_types::GenericResponse::from(String::from(
+                        "Triggered manual compaction",
+                    )))
+                })
+            },
+        );
+
+    // POST lighthouse/add_peer
+    let post_lighthouse_add_peer = warp::path("lighthouse")
+        .and(warp::path("add_peer"))
+        .and(warp::path::end())
+        .and(warp_utils::json::json())
+        .and(task_spawner_filter.clone())
+        .and(network_globals.clone())
+        .and(network_tx_filter.clone())
+        .and(log_filter.clone())
+        .then(
+            |request_data: api_types::AddPeer,
+             task_spawner: TaskSpawner<T::EthSpec>,
+             network_globals: Arc<NetworkGlobals<T::EthSpec>>,
+             network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
+             log: Logger| {
+                task_spawner.blocking_json_task(Priority::P0, move || {
+                    let enr = Enr::from_str(&request_data.enr).map_err(|e| {
+                        warp_utils::reject::custom_bad_request(format!("invalid enr error {}", e))
+                    })?;
+                    info!(
+                        log,
+                        "Adding trusted peer";
+                        "peer_id" => %enr.peer_id(),
+                        "multiaddr" => ?enr.multiaddr()
+                    );
+                    network_globals.add_trusted_peer(enr.clone());
+
+                    publish_network_message(&network_tx, NetworkMessage::ConnectToPeer(enr))?;
+
+                    Ok(api_types::GenericResponse::from(()))
+                })
+            },
+        );
+
     // POST lighthouse/liveness
     let post_lighthouse_liveness = warp::path("lighthouse")
         .and(warp::path("liveness"))
@@ -4539,34 +4620,6 @@ pub fn serve<T: BeaconChainTypes>(
             },
         );
 
-    let post_lighthouse_fork_choice_invalidate = warp::path("lighthouse")
-        .and(warp::path("fork_choice"))
-        .and(warp::path("invalidate"))
-        .and(warp::path::end())
-        .and(task_spawner_filter.clone())
-        .and(chain_filter.clone())
-        .and(warp_utils::json::json())
-        .then(
-            |task_spawner: TaskSpawner<T::EthSpec>,
-             chain: Arc<BeaconChain<T>>,
-             block_root: Hash256| {
-                task_spawner.blocking_json_task(Priority::P0, move || {
-                    let invalidation =
-                        proto_array::InvalidationOperation::InvalidateOne { block_root };
-                    chain
-                        .canonical_head
-                        .fork_choice_write_lock()
-                        .on_invalid_execution_payload(&invalidation)
-                        .map_err(|e| {
-                            warp_utils::reject::custom_server_error(format!(
-                                "not invalidated due to error: {e:?}"
-                            ))
-                        })?;
-                    Ok("invalidated")
-                })
-            },
-        );
-
     // GET lighthouse/analysis/block_rewards
     let get_lighthouse_block_rewards = warp::path("lighthouse")
         .and(warp::path("analysis"))
@@ -4928,10 +4981,12 @@ pub fn serve<T: BeaconChainTypes>(
                     .uor(post_validator_liveness_epoch)
                     .uor(post_lighthouse_liveness)
                     .uor(post_lighthouse_database_reconstruct)
-                    .uor(post_lighthouse_fork_choice_invalidate)
                     .uor(post_lighthouse_block_rewards)
                     .uor(post_lighthouse_ui_validator_metrics)
                     .uor(post_lighthouse_ui_validator_info)
+                    .uor(post_lighthouse_finalize)
+                    .uor(post_lighthouse_compaction)
+                    .uor(post_lighthouse_add_peer)
                     .recover(warp_utils::reject::handle_rejection),
             ),
         )
