@@ -1122,6 +1122,72 @@ pub fn serve<T: BeaconChainTypes>(
             },
         );
 
+    // GET beacon/states/{state_id}/pending_deposits
+    let get_beacon_state_pending_deposits = beacon_states_path
+        .clone()
+        .and(warp::path("pending_deposits"))
+        .and(warp::path::end())
+        .then(
+            |state_id: StateId,
+             task_spawner: TaskSpawner<T::EthSpec>,
+             chain: Arc<BeaconChain<T>>| {
+                task_spawner.blocking_json_task(Priority::P1, move || {
+                    let (data, execution_optimistic, finalized) = state_id
+                        .map_state_and_execution_optimistic_and_finalized(
+                            &chain,
+                            |state, execution_optimistic, finalized| {
+                                let Ok(deposits) = state.pending_deposits() else {
+                                    return Err(warp_utils::reject::custom_bad_request(
+                                        "Pending deposits not found".to_string(),
+                                    ));
+                                };
+
+                                Ok((deposits.clone(), execution_optimistic, finalized))
+                            },
+                        )?;
+
+                    Ok(api_types::ExecutionOptimisticFinalizedResponse {
+                        data,
+                        execution_optimistic: Some(execution_optimistic),
+                        finalized: Some(finalized),
+                    })
+                })
+            },
+        );
+
+    // GET beacon/states/{state_id}/pending_partial_withdrawals
+    let get_beacon_state_pending_partial_withdrawals = beacon_states_path
+        .clone()
+        .and(warp::path("pending_partial_withdrawals"))
+        .and(warp::path::end())
+        .then(
+            |state_id: StateId,
+             task_spawner: TaskSpawner<T::EthSpec>,
+             chain: Arc<BeaconChain<T>>| {
+                task_spawner.blocking_json_task(Priority::P1, move || {
+                    let (data, execution_optimistic, finalized) = state_id
+                        .map_state_and_execution_optimistic_and_finalized(
+                            &chain,
+                            |state, execution_optimistic, finalized| {
+                                let Ok(withdrawals) = state.pending_partial_withdrawals() else {
+                                    return Err(warp_utils::reject::custom_bad_request(
+                                        "Pending withdrawals not found".to_string(),
+                                    ));
+                                };
+
+                                Ok((withdrawals.clone(), execution_optimistic, finalized))
+                            },
+                        )?;
+
+                    Ok(api_types::ExecutionOptimisticFinalizedResponse {
+                        data,
+                        execution_optimistic: Some(execution_optimistic),
+                        finalized: Some(finalized),
+                    })
+                })
+            },
+        );
+
     // GET beacon/headers
     //
     // Note: this endpoint only returns information about blocks in the canonical chain. Given that
@@ -1856,13 +1922,6 @@ pub fn serve<T: BeaconChainTypes>(
              network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
              reprocess_tx: Option<Sender<ReprocessQueueMessage>>,
              log: Logger| async move {
-                if chain.config.disable_attesting {
-                    return convert_rejection::<Response<String>>(Err(
-                        warp_utils::reject::custom_bad_request("Attesting disabled".to_string()),
-                    ))
-                    .await;
-                }
-
                 let attestations = attestations.into_iter().map(Either::Left).collect();
                 let result = crate::publish_attestations::publish_attestations(
                     task_spawner,
@@ -1895,12 +1954,6 @@ pub fn serve<T: BeaconChainTypes>(
              network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
              reprocess_tx: Option<Sender<ReprocessQueueMessage>>,
              log: Logger| async move {
-                if chain.config.disable_attesting {
-                    return convert_rejection::<Response<String>>(Err(
-                        warp_utils::reject::custom_bad_request("Attesting disabled".to_string()),
-                    ))
-                    .await;
-                }
                 let attestations =
                     match crate::publish_attestations::deserialize_attestation_payload::<T>(
                         payload, fork_name, &log,
@@ -1948,14 +2001,6 @@ pub fn serve<T: BeaconChainTypes>(
              chain: Arc<BeaconChain<T>>,
              query: api_types::AttestationPoolQuery| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_response_task(Priority::P1, move || {
                             let query_filter = |data: &AttestationData| {
@@ -2228,14 +2273,6 @@ pub fn serve<T: BeaconChainTypes>(
              network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
              log: Logger| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_json_task(Priority::P0, move || {
                             sync_committees::process_sync_committee_signatures(
@@ -3459,14 +3496,6 @@ pub fn serve<T: BeaconChainTypes>(
              task_spawner: TaskSpawner<T::EthSpec>,
              chain: Arc<BeaconChain<T>>| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_json_task(Priority::P0, move || {
                             not_synced_filter?;
@@ -3499,14 +3528,6 @@ pub fn serve<T: BeaconChainTypes>(
              task_spawner: TaskSpawner<T::EthSpec>,
              chain: Arc<BeaconChain<T>>| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_json_task(Priority::P0, move || {
                             not_synced_filter?;
@@ -3532,14 +3553,6 @@ pub fn serve<T: BeaconChainTypes>(
              task_spawner: TaskSpawner<T::EthSpec>,
              chain: Arc<BeaconChain<T>>| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_json_task(Priority::P0, move || {
                             not_synced_filter?;
@@ -3585,14 +3598,6 @@ pub fn serve<T: BeaconChainTypes>(
              aggregates: Vec<SignedAggregateAndProof<T::EthSpec>>,
              network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>, log: Logger| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                 task_spawner.blocking_json_task(Priority::P0, move || {
                     not_synced_filter?;
                     let seen_timestamp = timestamp_now();
@@ -3711,14 +3716,6 @@ pub fn serve<T: BeaconChainTypes>(
              network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
              log: Logger| {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                     task_spawner
                         .blocking_json_task(Priority::P0, move || {
                             not_synced_filter?;
@@ -3753,14 +3750,6 @@ pub fn serve<T: BeaconChainTypes>(
                  chain: Arc<BeaconChain<T>>,
                  log: Logger| {
                     async move {
-                        if chain.config.disable_attesting {
-                            return convert_rejection::<Response<String>>(Err(
-                                warp_utils::reject::custom_bad_request(
-                                    "Attesting disabled".to_string(),
-                                ),
-                            ))
-                            .await;
-                        }
                         task_spawner.blocking_json_task(Priority::P0, move || {
                     let subscriptions: std::collections::BTreeSet<_> = subscriptions
                         .iter()
@@ -4054,14 +4043,6 @@ pub fn serve<T: BeaconChainTypes>(
              log: Logger
              | {
                 async move {
-                    if chain.config.disable_attesting {
-                        return convert_rejection::<Response<String>>(Err(
-                            warp_utils::reject::custom_bad_request(
-                                "Attesting disabled".to_string(),
-                            ),
-                        ))
-                        .await;
-                    }
                 task_spawner.blocking_json_task(Priority::P0, move || {
                     for subscription in subscriptions {
                         chain
@@ -4176,40 +4157,6 @@ pub fn serve<T: BeaconChainTypes>(
                     Ok(api_types::GenericResponse::from(String::from(
                         "Triggered manual compaction",
                     )))
-                })
-            },
-        );
-
-    // POST lighthouse/add_peer
-    let post_lighthouse_add_peer = warp::path("lighthouse")
-        .and(warp::path("add_peer"))
-        .and(warp::path::end())
-        .and(warp_utils::json::json())
-        .and(task_spawner_filter.clone())
-        .and(network_globals.clone())
-        .and(network_tx_filter.clone())
-        .and(log_filter.clone())
-        .then(
-            |request_data: api_types::AddPeer,
-             task_spawner: TaskSpawner<T::EthSpec>,
-             network_globals: Arc<NetworkGlobals<T::EthSpec>>,
-             network_tx: UnboundedSender<NetworkMessage<T::EthSpec>>,
-             log: Logger| {
-                task_spawner.blocking_json_task(Priority::P0, move || {
-                    let enr = Enr::from_str(&request_data.enr).map_err(|e| {
-                        warp_utils::reject::custom_bad_request(format!("invalid enr error {}", e))
-                    })?;
-                    info!(
-                        log,
-                        "Adding trusted peer";
-                        "peer_id" => %enr.peer_id(),
-                        "multiaddr" => ?enr.multiaddr()
-                    );
-                    network_globals.add_trusted_peer(enr.clone());
-
-                    publish_network_message(&network_tx, NetworkMessage::ConnectToPeer(enr))?;
-
-                    Ok(api_types::GenericResponse::from(()))
                 })
             },
         );
@@ -4871,6 +4818,8 @@ pub fn serve<T: BeaconChainTypes>(
                 .uor(get_beacon_state_committees)
                 .uor(get_beacon_state_sync_committees)
                 .uor(get_beacon_state_randao)
+                .uor(get_beacon_state_pending_deposits)
+                .uor(get_beacon_state_pending_partial_withdrawals)
                 .uor(get_beacon_headers)
                 .uor(get_beacon_headers_block_id)
                 .uor(get_beacon_block)
@@ -4986,7 +4935,6 @@ pub fn serve<T: BeaconChainTypes>(
                     .uor(post_lighthouse_ui_validator_info)
                     .uor(post_lighthouse_finalize)
                     .uor(post_lighthouse_compaction)
-                    .uor(post_lighthouse_add_peer)
                     .recover(warp_utils::reject::handle_rejection),
             ),
         )

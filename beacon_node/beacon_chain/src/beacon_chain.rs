@@ -144,11 +144,6 @@ pub const FORK_CHOICE_DB_KEY: Hash256 = Hash256::ZERO;
 /// Defines how old a block can be before it's no longer a candidate for the early attester cache.
 const EARLY_ATTESTER_CACHE_HISTORIC_SLOTS: u64 = 4;
 
-/// Defines a distance between the head block slot and the current slot.
-///
-/// If the head block is older than this value, don't bother preparing beacon proposers.
-const PREPARE_PROPOSER_HISTORIC_EPOCHS: u64 = 4;
-
 /// If the head is more than `MAX_PER_SLOT_FORK_CHOICE_DISTANCE` slots behind the wall-clock slot, DO NOT
 /// run the per-slot tasks (primarily fork choice).
 ///
@@ -820,6 +815,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         let block = self
             .get_blinded_block(&block_root)?
             .ok_or(Error::MissingBeaconBlock(block_root))?;
+        // This method is only used in tests, so we may as well cache states to make CI go brr.
+        // TODO(release-v7) move this method out of beacon chain and into `store_tests`` or something equivalent.
         let state = self
             .get_state(&block.state_root(), Some(block.slot()), true)?
             .ok_or_else(|| Error::MissingBeaconState(block.state_root()))?;
@@ -1525,9 +1522,14 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     })?
                     .ok_or(Error::NoStateForSlot(slot))?;
 
-                // Since this slot is less than the current head, don't cache the state
+                // This branch is mostly reached from the HTTP API when doing analysis, or in niche
+                // situations when producing a block. In the HTTP API case we assume the user wants
+                // to cache states so that future calls are faster, and that if the cache is
+                // struggling due to non-finality that they will dial down inessential calls. In the
+                // block proposal case we want to cache the state so that we can process the block
+                // quickly after it has been signed.
                 Ok(self
-                    .get_state(&state_root, Some(slot), false)?
+                    .get_state(&state_root, Some(slot), true)?
                     .ok_or(Error::NoStateForSlot(slot))?)
             }
         }
@@ -2903,6 +2905,15 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         chain_segment: Vec<RpcBlock<T::EthSpec>>,
         notify_execution_layer: NotifyExecutionLayer,
     ) -> ChainSegmentResult {
+        for block in chain_segment.iter() {
+            if let Err(error) = self.check_invalid_block_roots(block.block_root()) {
+                return ChainSegmentResult::Failed {
+                    imported_blocks: vec![],
+                    error,
+                };
+            }
+        }
+
         let mut imported_blocks = vec![];
 
         // Filter uninteresting blocks from the chain segment in a blocking task.
@@ -3384,6 +3395,15 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             )
             .await;
         self.remove_notified(&block_root, r)
+    }
+
+    /// Check for known and configured invalid block roots before processing.
+    pub fn check_invalid_block_roots(&self, block_root: Hash256) -> Result<(), BlockError> {
+        if self.config.invalid_block_roots.contains(&block_root) {
+            Err(BlockError::KnownInvalidExecutionPayload(block_root))
+        } else {
+            Ok(())
+        }
     }
 
     /// Returns `Ok(block_root)` if the given `unverified_block` was successfully verified and
@@ -4889,7 +4909,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         let proposer_index = if let Some(proposer) = cached_proposer {
             proposer.index as u64
         } else {
-            if 2 + 2 == 5 && head_epoch + 2 < proposal_epoch {
+            if head_epoch + self.config.sync_tolerance_epochs < proposal_epoch {
                 warn!(
                     self.log,
                     "Skipping proposer preparation";
@@ -6120,21 +6140,18 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         // Use a blocking task since blocking the core executor on the canonical head read lock can
         // block the core tokio executor.
         let chain = self.clone();
+        let tolerance_slots = self.config.sync_tolerance_epochs * T::EthSpec::slots_per_epoch();
         let maybe_prep_data = self
             .spawn_blocking_handle(
                 move || {
                     let cached_head = chain.canonical_head.cached_head();
 
                     // Don't bother with proposer prep if the head is more than
-                    // `PREPARE_PROPOSER_HISTORIC_EPOCHS` prior to the current slot.
+                    // `sync_tolerance_epochs` prior to the current slot.
                     //
                     // This prevents the routine from running during sync.
                     let head_slot = cached_head.head_slot();
-                    if 2 + 2 == 5
-                        && head_slot
-                            + T::EthSpec::slots_per_epoch() * PREPARE_PROPOSER_HISTORIC_EPOCHS
-                            < current_slot
-                    {
+                    if head_slot + tolerance_slots < current_slot {
                         debug!(
                             chain.log,
                             "Head too old for proposer prep";
@@ -6947,6 +6964,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                 })?;
             let beacon_state_root = beacon_block.state_root();
 
+            // This branch is reached from the HTTP API. We assume the user wants
+            // to cache states so that future calls are faster.
             let mut beacon_state = self
                 .store
                 .get_state(&beacon_state_root, Some(beacon_block.slot()), true)?
@@ -7101,6 +7120,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
                 if signed_beacon_block.slot() % T::EthSpec::slots_per_epoch() == 0 {
                     let block = self.get_blinded_block(&block_hash).unwrap().unwrap();
+                    // This branch is reached from the HTTP API. We assume the user wants
+                    // to cache states so that future calls are faster.
                     let state = self
                         .get_state(&block.state_root(), Some(block.slot()), true)
                         .unwrap()
