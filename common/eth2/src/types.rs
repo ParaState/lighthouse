@@ -1432,11 +1432,6 @@ pub struct ManualFinalizationRequestData {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AddPeer {
-    pub enr: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct LivenessRequestData {
     pub epoch: Epoch,
     #[serde(with = "serde_utils::quoted_u64_vec")]

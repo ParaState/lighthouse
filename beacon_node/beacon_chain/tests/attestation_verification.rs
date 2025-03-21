@@ -36,6 +36,9 @@ pub const VALIDATOR_COUNT: usize = 256;
 
 pub const CAPELLA_FORK_EPOCH: usize = 1;
 
+// When set to true, cache any states fetched from the db.
+pub const CACHE_STATE_IN_TESTS: bool = true;
+
 /// A cached set of keys.
 static KEYPAIRS: LazyLock<Vec<Keypair>> =
     LazyLock::new(|| types::test_utils::generate_deterministic_keypairs(VALIDATOR_COUNT));
@@ -1225,7 +1228,15 @@ async fn attestation_that_skips_epochs() {
 
     let mut state = harness
         .chain
+<<<<<<< HEAD
         .get_state(&earlier_block.state_root(), Some(earlier_slot), true)
+=======
+        .get_state(
+            &earlier_block.state_root(),
+            Some(earlier_slot),
+            CACHE_STATE_IN_TESTS,
+        )
+>>>>>>> v7.0.0-beta.4
         .expect("should not error getting state")
         .expect("should find state");
 
@@ -1329,9 +1340,18 @@ async fn attestation_validator_receive_proposer_reward_and_withdrawals() {
         .await;
 
     let current_slot = harness.get_current_slot();
+
     let mut state = harness
         .chain
+<<<<<<< HEAD
         .get_state(&earlier_block.state_root(), Some(earlier_slot), true)
+=======
+        .get_state(
+            &earlier_block.state_root(),
+            Some(earlier_slot),
+            CACHE_STATE_IN_TESTS,
+        )
+>>>>>>> v7.0.0-beta.4
         .expect("should not error getting state")
         .expect("should find state");
 
@@ -1399,7 +1419,15 @@ async fn attestation_to_finalized_block() {
 
     let mut state = harness
         .chain
+<<<<<<< HEAD
         .get_state(&earlier_block.state_root(), Some(earlier_slot), true)
+=======
+        .get_state(
+            &earlier_block.state_root(),
+            Some(earlier_slot),
+            CACHE_STATE_IN_TESTS,
+        )
+>>>>>>> v7.0.0-beta.4
         .expect("should not error getting state")
         .expect("should find state");
 
