@@ -411,4 +411,9 @@ mod tests {
 
         assert_eq!(expected_pk, kp.pk);
     }
+
+    #[tokio::test]
+    async fn test_sign_exit() {
+        
+    }
 }

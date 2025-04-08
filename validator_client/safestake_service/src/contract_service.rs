@@ -34,7 +34,7 @@ use std::sync::Arc;
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use types::{Address as H160, Epoch, ForkName};
+use types::{Address as H160, ChainSpec, Epoch, ForkName};
 use types::{Keypair, PublicKey, SecretKey, DepositData, EthSpec, SignedRoot, SignedVoluntaryExit, VoluntaryExit, Domain};
 use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
@@ -43,7 +43,7 @@ use validator_http_api::ApiSecret;
 use validator_store::ValidatorStore;
 use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
 use parking_lot::RwLock;
-use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials, get_validator_index_for_exit, get_beacon_state_fork};
+use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials, get_validator_index_for_exit};
 use safestake_operator::proto::{
     ValidatorGenerationRequest, ValidatorExitResponse, ValidatorGenerationResponse, ValidatorExitRequest
 };
@@ -337,7 +337,8 @@ impl ContractService {
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
         validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
         store_sender: mpsc::Sender<(Hash256, Signature, PublicKey)>,
-        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
+        operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
+        spec: Arc<ChainSpec>
     ) {
         let provider: P =
             ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
@@ -421,7 +422,8 @@ impl ContractService {
                                             &validator_keys,
                                             &executor_,
                                             &store_sender,
-                                            &operator_channels
+                                            &operator_channels,
+                                            &spec
                                         )
                                         .await
                                         {
@@ -559,7 +561,8 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     validator_keys: &Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
     executor: &TaskExecutor,
     store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>,
-    operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>
+    operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
+    spec: &Arc<ChainSpec>
 ) -> Result<(), String> {
     match log.topic0() {
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
@@ -583,10 +586,10 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
         }
         Some(&VALIDATOR_KEYS_GENERATION) => {
-            handle_validator_key_generation::<E>(log, logger, config, db, sender).await?;
+            handle_validator_key_generation::<E>(log, logger, config, db, sender, spec).await?;
         }
         Some(&VALIDATOR_EXIT_DATA_GENERATION) => {
-            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender, operator_channels).await?;
+            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender, operator_channels, spec).await?;
         }
         _ => {}
     };
@@ -895,6 +898,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
     config: &Config,
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
+    spec: &Arc<ChainSpec>
 ) -> Result<(), String> {
     let SafeStakeClusterNode::ValidatorDepositDataGeneration{
         clusterNodePublicKey,
@@ -997,6 +1001,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 withdrawAddress,
                 32_000_000_000,
                 &config.beacon_nodes,
+                spec,
             )
             .await?;
 
@@ -1072,7 +1077,8 @@ async fn handle_validator_exit<E: EthSpec>(
     validator_client: &ValidatorClientHttpClient,
     executor: &TaskExecutor,
     store_sender: &mpsc::Sender<(Hash256, Signature, PublicKey)>,
-    operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>
+    operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
+    spec: &Arc<ChainSpec>
 ) -> Result<(), String>  {
     let SafeStakeClusterNode::ValidatorExitDataGeneration{
         validatorPubKeys,
@@ -1089,8 +1095,8 @@ async fn handle_validator_exit<E: EthSpec>(
         );
         let epoch: u64 = activeEpoch.try_into().unwrap();
         if operator_committee_definition_path.exists() {
-            let (message, signature, voluntary_exit) = local_sign_voluntary_exit::<E>(&validator_public_key, &config.beacon_nodes, &validator_client, Epoch::from(epoch)).await?;
-            let _ = store_sender.send((message, signature.clone(), validator_public_key.clone())).await;
+            let (message, local_signature, voluntary_exit) = local_sign_voluntary_exit::<E>(&validator_public_key, &config.beacon_nodes, &validator_client, Epoch::from(epoch), spec).await?;
+            let _ = store_sender.send((message, local_signature.clone(), validator_public_key.clone())).await;
             info!(
                 logger,
                 "validator voluntary exit";
@@ -1116,7 +1122,7 @@ async fn handle_validator_exit<E: EthSpec>(
 
             match committee.sign(
                 message,
-                signature,
+                local_signature,
                 executor
             ).await {
                 Ok((signature, _)) => {
@@ -1124,7 +1130,7 @@ async fn handle_validator_exit<E: EthSpec>(
                         message: voluntary_exit,
                         signature: signature,
                     };
-                    post_signed_voluntary_exit::<E>(signed_voluntary_exit, &config.beacon_nodes).await?;
+                    post_signed_voluntary_exit::<E>(signed_voluntary_exit, &config.beacon_nodes, spec).await?;
                 },
                 Err(e) => {
                     error!(
@@ -1175,8 +1181,8 @@ async fn qeury_block_timestamp(provider: &P, block_number: u64) -> u64 {
 async fn post_signed_voluntary_exit<E: EthSpec>(
     signed_voluntary_exit: SignedVoluntaryExit,
     beacon_nodes_urls: &Vec<SensitiveUrl>,
+    spec: &Arc<ChainSpec>
 ) -> Result<(), String> {
-    let spec = E::default_spec();
     let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
     client.post_beacon_pool_voluntary_exits(&signed_voluntary_exit).await.map_err(|e| {
         format!("failde to post voluntary exist {:?}", e)
@@ -1187,10 +1193,10 @@ pub async fn local_sign_voluntary_exit<E: EthSpec>(
     validator_public_key: &PublicKey,
     beacon_nodes_urls: &Vec<SensitiveUrl>,
     validator_client: &ValidatorClientHttpClient,
-    epoch: Epoch
+    epoch: Epoch,
+    spec: &Arc<ChainSpec>
 ) -> Result<(Hash256, Signature, VoluntaryExit), String> {
-    let spec = E::default_spec();
-    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
+    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, spec).await?;
     let genesis_data = client
         .get_beacon_genesis()
         .await
@@ -1239,6 +1245,7 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
     withdraw_address: Address,
     amount: u64,
     beacon_nodes_urls: &Vec<SensitiveUrl>,
+    spec: &Arc<ChainSpec>
 ) -> Result<(DepositData, [u8; 4]), String> {
     let withdrawal_credentials = convert_address_to_withdraw_crendentials(withdraw_address);
     let mut deposit_data = DepositData {
@@ -1247,9 +1254,8 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
         amount: amount,
         signature: Signature::empty().into(),
     };
-    let mut spec = E::default_spec();
     // query genesis fork version from beacon node
-    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, &spec).await?;
+    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, spec).await?;
     let genesis_data = client
         .get_beacon_genesis()
         .await
@@ -1257,7 +1263,6 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
             format!("failed to get beacon genesis data {:?}", e)
         })?
         .data;
-    spec.genesis_fork_version = genesis_data.genesis_fork_version;
     // spec.genesis_fork_version = [00, 00, 16, 32];    //this value is for goerli testnet
     let domain = spec.get_deposit_domain();
     let msg = deposit_data.as_deposit_message().signing_root(domain);

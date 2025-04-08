@@ -584,7 +584,8 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             sender,
             validator_keys.clone(),
             store_sender,
-            operator_channels
+            operator_channels,
+            context.eth2_config.spec.clone()
         )
         .await;
 

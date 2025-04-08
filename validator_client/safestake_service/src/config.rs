@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use sensitive_url::SensitiveUrl;
-
 /// Stores the core configuration for this validator instance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {

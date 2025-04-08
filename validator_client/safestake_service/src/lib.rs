@@ -11,6 +11,7 @@ use std::time::Duration;
 use types::ChainSpec;
 use safe_arith::SafeArith;
 use alloy_primitives::Address;
+use std::sync::Arc;
 /// Gets syncing status from beacon node client and returns true if syncing and false otherwise.
 async fn is_syncing(client: &BeaconNodeHttpClient) -> Result<bool, String> {
     Ok(client
@@ -23,7 +24,7 @@ async fn is_syncing(client: &BeaconNodeHttpClient) -> Result<bool, String> {
 
 pub async fn get_valid_beacon_node_http_client(
     beacon_nodes_urls: &Vec<SensitiveUrl>,
-    spec: &ChainSpec,
+    spec: &Arc<ChainSpec>,
 ) -> Result<BeaconNodeHttpClient, String> {
     for i in 0..beacon_nodes_urls.len() {
         let client = BeaconNodeHttpClient::new(
@@ -104,7 +105,7 @@ async fn get_validator_data(
 }
 
 /// Get fork object for the current state by querying the beacon node client.
-async fn get_beacon_state_fork(client: &BeaconNodeHttpClient) -> Result<Fork, String> {
+async fn _get_beacon_state_fork(client: &BeaconNodeHttpClient) -> Result<Fork, String> {
     Ok(client
         .get_beacon_states_fork(StateId::Head)
         .await
