@@ -34,7 +34,7 @@ use std::sync::Arc;
 use task_executor::TaskExecutor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use types::{Address as H160, Epoch};
+use types::{Address as H160, Epoch, ForkName};
 use types::{Keypair, PublicKey, SecretKey, DepositData, EthSpec, SignedRoot, SignedVoluntaryExit, VoluntaryExit, Domain};
 use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
@@ -1199,15 +1199,21 @@ pub async fn local_sign_voluntary_exit<E: EthSpec>(
         })?
         .data;
     let validator_index = get_validator_index_for_exit(&client, &validator_public_key, epoch, &spec).await?;
-    let fork = get_beacon_state_fork(&client).await?;
+    let fork_name = spec.fork_name_at_epoch(epoch);
+    let fork_version = if fork_name.deneb_enabled() {
+        // EIP-7044
+        spec.fork_version_for_name(ForkName::Capella)
+    } else {
+        spec.fork_version_for_name(fork_name)
+    };
+
     let voluntary_exit = VoluntaryExit {
         epoch,
         validator_index,
     };
-    let domain = spec.get_domain(
-        epoch,
+    let domain = spec.compute_domain(
         Domain::VoluntaryExit,
-        &fork,
+        fork_version,
         genesis_data.genesis_validators_root,
     );
     let message = voluntary_exit.signing_root(domain);
