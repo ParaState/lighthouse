@@ -2172,6 +2172,14 @@ fn custody_lookup_happy_path() {
     r.expect_no_active_lookups();
 }
 
+#[test]
+fn test_compress_block() {
+    let mut rig = TestRig::test_setup();
+    let block = rig.rand_block();
+    let data = serde_json::to_vec(&block).unwrap();
+    println!("{}", String::from_utf8(data).unwrap())
+}
+
 // TODO(das): Test retries of DataColumnByRoot:
 // - Expect request for column_index
 // - Respond with bad data

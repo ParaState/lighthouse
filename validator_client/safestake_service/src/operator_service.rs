@@ -288,7 +288,9 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             req.operator_id,
         )?;
 
-        let attestation_data: AttestationData = match serde_json::from_slice(&req.attestation_data)
+        let decompressed = safestake_operator::decompress_data(&req.attestation_data).unwrap();
+
+        let attestation_data: AttestationData = match serde_json::from_slice(&decompressed)
         {
             Ok(a) => a,
             Err(e) => {
@@ -356,8 +358,10 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             req.operator_id,
         )?;
 
+        let decompressed = safestake_operator::decompress_data(&req.full_block_data).unwrap();
+
         let block: BeaconBlock<E, FullPayload<E>> =
-            match serde_json::from_slice(&req.full_block_data) {
+            match serde_json::from_slice(&decompressed) {
                 Ok(b) => b,
                 Err(e) => {
                     error!(self.logger, "deserialize full block"; "error" => %e);
@@ -415,8 +419,9 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             req.operator_id,
         )?;
 
+        let decompressed = safestake_operator::decompress_data(&req.blinded_block_data).unwrap();
         let block: BeaconBlock<E, BlindedPayload<E>> =
-            match serde_json::from_slice(&req.blinded_block_data) {
+            match serde_json::from_slice(&decompressed) {
                 Ok(b) => b,
                 Err(e) => {
                     error!(self.logger, "deserialize blinded block"; "error" => %e);
