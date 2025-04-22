@@ -896,7 +896,7 @@ impl<E: EthSpec> PeerManager<E> {
     }
 
     // Gracefully disconnects a peer without banning them.
-    fn disconnect_peer(&mut self, peer_id: PeerId, reason: GoodbyeReason) {
+    pub fn disconnect_peer(&mut self, peer_id: PeerId, reason: GoodbyeReason) {
         self.events
             .push(PeerManagerEvent::DisconnectPeer(peer_id, reason));
         self.network_globals
@@ -947,8 +947,8 @@ impl<E: EthSpec> PeerManager<E> {
 
     fn maintain_trusted_peers(&mut self) {
         let trusted_peers = self.trusted_peers.clone();
-        for trusted_peer in &trusted_peers {
-            self.dial_peer(trusted_peer.clone());
+        for trusted_peer in trusted_peers {
+            self.dial_peer(trusted_peer);
         }
     }
 
@@ -992,23 +992,23 @@ impl<E: EthSpec> PeerManager<E> {
     /// - Do not prune outbound peers to exceed our outbound target.
     /// - Do not prune more peers than our target peer count.
     /// - If we have an option to remove a number of peers, remove ones that have the least
-    ///     long-lived subnets.
+    ///   long-lived subnets.
     /// - When pruning peers based on subnet count. If multiple peers can be chosen, choose a peer
-    ///     that is not subscribed to a long-lived sync committee subnet.
+    ///   that is not subscribed to a long-lived sync committee subnet.
     /// - When pruning peers based on subnet count, do not prune a peer that would lower us below the
-    ///     MIN_SYNC_COMMITTEE_PEERS peer count. To keep it simple, we favour a minimum number of sync-committee-peers over
-    ///     uniformity subnet peers. NOTE: We could apply more sophisticated logic, but the code is
-    ///     simpler and easier to maintain if we take this approach. If we are pruning subnet peers
-    ///     below the MIN_SYNC_COMMITTEE_PEERS and maintaining the sync committee peers, this should be
-    ///     fine as subnet peers are more likely to be found than sync-committee-peers. Also, we're
-    ///     in a bit of trouble anyway if we have so few peers on subnets. The
-    ///     MIN_SYNC_COMMITTEE_PEERS
-    ///     number should be set low as an absolute lower bound to maintain peers on the sync
-    ///     committees.
+    ///   MIN_SYNC_COMMITTEE_PEERS peer count. To keep it simple, we favour a minimum number of sync-committee-peers over
+    ///   uniformity subnet peers. NOTE: We could apply more sophisticated logic, but the code is
+    ///   simpler and easier to maintain if we take this approach. If we are pruning subnet peers
+    ///   below the MIN_SYNC_COMMITTEE_PEERS and maintaining the sync committee peers, this should be
+    ///   fine as subnet peers are more likely to be found than sync-committee-peers. Also, we're
+    ///   in a bit of trouble anyway if we have so few peers on subnets. The
+    ///   MIN_SYNC_COMMITTEE_PEERS
+    ///   number should be set low as an absolute lower bound to maintain peers on the sync
+    ///   committees.
     /// - Do not prune trusted peers. NOTE: This means if a user has more trusted peers than the
-    ///     excess peer limit, all of the following logic is subverted as we will not prune any peers.
-    ///     Also, the more trusted peers a user has, the less room Lighthouse has to efficiently manage
-    ///     its peers across the subnets.
+    ///   excess peer limit, all of the following logic is subverted as we will not prune any peers.
+    ///   Also, the more trusted peers a user has, the less room Lighthouse has to efficiently manage
+    ///   its peers across the subnets.
     ///
     /// Prune peers in the following order:
     /// 1. Remove worst scoring peers
@@ -1483,6 +1483,10 @@ impl<E: EthSpec> PeerManager<E> {
 
     pub fn add_trusted_peer(&mut self, enr: Enr) {
         self.trusted_peers.insert(enr);
+    }
+
+    pub fn remove_trusted_peer(&mut self, enr: Enr) {
+        self.trusted_peers.remove(&enr);
     }
 }
 

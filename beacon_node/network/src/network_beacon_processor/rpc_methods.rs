@@ -1,9 +1,10 @@
+use crate::metrics;
 use crate::network_beacon_processor::{NetworkBeaconProcessor, FUTURE_SLOT_TOLERANCE};
 use crate::service::NetworkMessage;
 use crate::status::ToStatusMessage;
 use crate::sync::SyncMessage;
 use beacon_chain::{BeaconChainError, BeaconChainTypes, WhenSlotSkipped};
-use itertools::process_results;
+use itertools::{process_results, Itertools};
 use lighthouse_network::discovery::ConnectionId;
 use lighthouse_network::rpc::methods::{
     BlobsByRangeRequest, BlobsByRootRequest, DataColumnsByRangeRequest, DataColumnsByRootRequest,
@@ -684,8 +685,25 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
             "count" => req_count,
         );
 
-        let block_roots =
-            self.get_block_roots_for_slot_range(req_start_slot, req_count, "BlocksByRange")?;
+        // Spawn a blocking handle since get_block_roots_for_slot_range takes a sync lock on the
+        // fork-choice.
+        let network_beacon_processor = self.clone();
+        let block_roots = self
+            .executor
+            .spawn_blocking_handle(
+                move || {
+                    network_beacon_processor.get_block_roots_for_slot_range(
+                        req_start_slot,
+                        req_count,
+                        "BlocksByRange",
+                    )
+                },
+                "get_block_roots_for_slot_range",
+            )
+            .ok_or((RpcErrorResponse::ServerError, "shutting down"))?
+            .await
+            .map_err(|_| (RpcErrorResponse::ServerError, "tokio join"))??;
+
         let current_slot = self
             .chain
             .slot()
@@ -805,7 +823,7 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
         req_count: u64,
         req_type: &str,
     ) -> Result<Vec<Hash256>, (RpcErrorResponse, &'static str)> {
-        let block_roots_timer = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
         let finalized_slot = self
             .chain
             .canonical_head
@@ -814,7 +832,7 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
             .epoch
             .start_slot(T::EthSpec::slots_per_epoch());
 
-        let (block_roots, block_roots_source) = if req_start_slot >= finalized_slot.as_u64() {
+        let (block_roots, source) = if req_start_slot >= finalized_slot.as_u64() {
             // If the entire requested range is after finalization, use fork_choice
             (
                 self.chain
@@ -847,15 +865,22 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
             (roots_from_store, "mixed")
         };
 
+        let elapsed = start_time.elapsed();
+        metrics::observe_timer_vec(
+            &metrics::BEACON_PROCESSOR_GET_BLOCK_ROOTS_TIME,
+            &[source],
+            elapsed,
+        );
+
         debug!(
             self.log,
             "Range request block roots retrieved";
             "req_type" => req_type,
             "start_slot" => req_start_slot,
-            "count" => req_count,
-            "block_roots_count" => block_roots.len(),
-            "block_roots_source" => block_roots_source,
-            "elapsed" => ?block_roots_timer.elapsed(),
+            "req_count" => req_count,
+            "roots_count" => block_roots.len(),
+            "source" => source,
+            "elapsed" => ?elapsed,
             "finalized_slot" => finalized_slot
         );
 
@@ -892,20 +917,9 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
             };
 
         // Pick out the required blocks, ignoring skip-slots.
-        let mut last_block_root = None;
         let maybe_block_roots = process_results(forwards_block_root_iter, |iter| {
             iter.take_while(|(_, slot)| slot.as_u64() < start_slot.saturating_add(count))
-                // map skip slots to None
-                .map(|(root, _)| {
-                    let result = if Some(root) == last_block_root {
-                        None
-                    } else {
-                        Some(root)
-                    };
-                    last_block_root = Some(root);
-                    result
-                })
-                .collect::<Vec<Option<Hash256>>>()
+                .collect::<Vec<_>>()
         });
 
         let block_roots = match maybe_block_roots {
@@ -920,8 +934,12 @@ impl<T: BeaconChainTypes> NetworkBeaconProcessor<T> {
             }
         };
 
-        // remove all skip slots
-        Ok(block_roots.into_iter().flatten().collect::<Vec<_>>())
+        // remove all skip slots i.e. duplicated roots
+        Ok(block_roots
+            .into_iter()
+            .map(|(root, _)| root)
+            .unique()
+            .collect::<Vec<_>>())
     }
 
     /// Handle a `BlobsByRange` request from the peer.
