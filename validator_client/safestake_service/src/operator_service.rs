@@ -288,9 +288,11 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             req.operator_id,
         )?;
 
-        let decompressed = safestake_operator::decompress_data(&req.attestation_data).unwrap();
-
-        let attestation_data: AttestationData = match serde_json::from_slice(&decompressed)
+        let attest_bytes = match safestake_operator::decompress_data(&req.attestation_data) {
+            Ok(d) => d,
+            Err(_) => req.attestation_data
+        };
+        let attestation_data: AttestationData = match serde_json::from_slice(&attest_bytes)
         {
             Ok(a) => a,
             Err(e) => {
@@ -357,11 +359,13 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             &req.domian_hash_signature,
             req.operator_id,
         )?;
-
-        let decompressed = safestake_operator::decompress_data(&req.full_block_data).unwrap();
+        let block_bytes = match safestake_operator::decompress_data(&req.full_block_data) {
+            Ok(d) => d,
+            Err(_) => req.full_block_data
+        };
 
         let block: BeaconBlock<E, FullPayload<E>> =
-            match serde_json::from_slice(&decompressed) {
+            match serde_json::from_slice(&block_bytes) {
                 Ok(b) => b,
                 Err(e) => {
                     error!(self.logger, "deserialize full block"; "error" => %e);
@@ -418,10 +422,12 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             &req.domian_hash_signature,
             req.operator_id,
         )?;
-
-        let decompressed = safestake_operator::decompress_data(&req.blinded_block_data).unwrap();
+        let block_bytes = match safestake_operator::decompress_data(&req.blinded_block_data) {
+            Ok(d) => d,
+            Err(_) => req.blinded_block_data
+        };
         let block: BeaconBlock<E, BlindedPayload<E>> =
-            match serde_json::from_slice(&decompressed) {
+            match serde_json::from_slice(&block_bytes) {
                 Ok(b) => b,
                 Err(e) => {
                     error!(self.logger, "deserialize blinded block"; "error" => %e);
