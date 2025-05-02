@@ -11,6 +11,7 @@ use futures::future::join_all;
 use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
 use slog::{error, info, Logger};
+use tonic::Code;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use tonic::transport::Endpoint;
@@ -199,8 +200,15 @@ impl DvfOperatorCommittee {
                             );
                             version
                         },
-                        Err(_) => {
-                            OUTDATE_SOFTWARE_VERSION
+                        Err(e) => {
+                            match e.code() {
+                                Code::Unimplemented => {
+                                    OUTDATE_SOFTWARE_VERSION
+                                },
+                                _ => {
+                                    SOFTWARE_VERSION
+                                }
+                            }
                         }
                     }
                 },
@@ -286,4 +294,43 @@ async fn test_collect() {
         .into_iter()
         .flatten()
         .collect::<Vec<u32>>();
+}
+
+#[tokio::test]
+async fn test_software_version() {
+    let channel = Endpoint::from_shared(format!("http://18.136.59.87:26000")).unwrap().connect_lazy();
+
+    let mut client = SafestakeClient::new(channel.clone());
+    let request = tonic::Request::new(GetSoftwareVersionRequest{});
+
+    let version = tokio::select! {
+        result = client.get_software_version(request) => {
+            match result {
+                Ok(resp) => {
+                    let version = resp.into_inner().software_vresion;
+                    println!(
+                        "version {}",version
+                    );
+                    version
+                },
+                Err(e) => {
+                    match e.code() {
+                        Code::Unimplemented => {
+                            println!("Unimplemented");
+                            OUTDATE_SOFTWARE_VERSION
+                        },
+                        _ => {
+                            OUTDATE_SOFTWARE_VERSION
+                        }
+                    }
+                }
+            }
+        },
+        _ = sleep(RPC_REQUEST_TIMEOUT) => {
+            println!(
+                "operator liveness timeout"
+            );
+            SOFTWARE_VERSION
+        }
+    };
 }
