@@ -55,6 +55,8 @@ pub const SOFTWARE_MINOR_VERSION: u64 = 1;
 pub static SOFTWARE_VERSION: u64 =
     ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + SOFTWARE_MINOR_VERSION;
 
+pub static OUTDATE_SOFTWARE_VERSION: u64 = ROOT_VERSION * 1_000_000_000_000 + MAJOR_VERSION * 1_000_000 + 0;
+
 pub static DVF_STORE_PATH: &str = "dvf_store";
 pub static DVF_NODE_SECRET_PATH: &str = "node_key.json";
 pub static DVF_NODE_SECRET_HEX_PATH: &str = "node_key_hex.json";

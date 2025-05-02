@@ -7,7 +7,7 @@ use crate::proto::safestake_client::SafestakeClient;
 use crate::proto::*;
 use async_trait::async_trait;
 use bls::Error as BlsError;
-use dvf_utils::VERSION;
+use dvf_utils::{OUTDATE_SOFTWARE_VERSION, VERSION};
 use lazy_static::lazy_static;
 use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, SecretKey as SecpSecretKey, Signature as SecpSignature,
@@ -144,6 +144,7 @@ pub struct RemoteOperator {
     pub shared_public_key: PublicKey,
     pub logger: Logger,
     pub channel: Channel,
+    pub software_version: u64
 }
 
 #[async_trait]
@@ -222,14 +223,18 @@ impl TOperator for RemoteOperator {
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
 
-        let compressed = compress_data(data.as_bytes()).unwrap();
+        let sent_data = if self.software_version > OUTDATE_SOFTWARE_VERSION {
+            compress_data(data.as_bytes()).unwrap()
+        } else {
+            data.as_bytes().to_vec()
+        };
 
         let request = tonic::Request::new(AttestRequest {
             version: VERSION,
             operator_id: self.self_operator_id,
             domain_hash: domain_hash.0.to_vec(),
             domian_hash_signature: sig.flatten().to_vec(),
-            attestation_data: compressed,
+            attestation_data: sent_data,
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
@@ -267,13 +272,18 @@ impl TOperator for RemoteOperator {
         let mut client = SafestakeClient::new(self.channel.clone());
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
-        let compressed = compress_data(full_block).unwrap();
+
+        let sent_data = if self.software_version > OUTDATE_SOFTWARE_VERSION {
+            compress_data(full_block).unwrap()
+        } else {
+            full_block.to_vec()
+        };
         let request = tonic::Request::new(ProposeFullBlockRequest {
             version: VERSION,
             operator_id: self.self_operator_id,
             domain_hash: domain_hash.0.to_vec(),
             domian_hash_signature: sig.flatten().to_vec(),
-            full_block_data: compressed,
+            full_block_data: sent_data,
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
 
@@ -311,13 +321,17 @@ impl TOperator for RemoteOperator {
         let mut client = SafestakeClient::new(self.channel.clone());
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
-        let compressed = compress_data(blinded_block).unwrap();
+        let sent_data = if self.software_version > OUTDATE_SOFTWARE_VERSION {
+            compress_data(blinded_block).unwrap()
+        } else {
+            blinded_block.to_vec()
+        };
         let request = tonic::Request::new(ProposeBlindedBlockRequest {
             version: VERSION,
             operator_id: self.self_operator_id,
             domain_hash: domain_hash.0.to_vec(),
             domian_hash_signature: sig.flatten().to_vec(),
-            blinded_block_data: compressed,
+            blinded_block_data: sent_data,
             validator_public_key: self.validator_public_key.serialize().to_vec(),
         });
         

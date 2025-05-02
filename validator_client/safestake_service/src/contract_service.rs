@@ -1110,7 +1110,7 @@ async fn handle_validator_exit<E: EthSpec>(
 
             let pos = def.operator_ids.iter().position(|x| *x == config.operator_id).unwrap();
             let operator_shared_public = def.operator_public_keys[pos].clone();
-            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone(), operator_channels.clone());
+            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone(), operator_channels.clone()).await;
             
             committee.add_operator(
                 config.operator_id,

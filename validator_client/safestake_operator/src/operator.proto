@@ -12,6 +12,13 @@ message CheckLivenessResponse {
     bytes signature = 1;
 }
 
+message GetSoftwareVersionRequest {
+}
+
+message GetSoftwareVersionResponse {
+    uint64 software_vresion = 1;
+}
+
 message GetSignatureRequest {
     uint64 version = 1;
     bytes msg = 2;
@@ -68,5 +75,6 @@ service Safestake {
     rpc AttestData(AttestRequest) returns (AttestResponse) {}
     rpc ProposeFullBlock(ProposeFullBlockRequest) returns (ProposeFullBlockResponse) {}
     rpc ProposeBlindedBlock(ProposeBlindedBlockRequest) returns (ProposeBlindedBlockResponse) {}
+    rpc GetSoftwareVersion(GetSoftwareVersionRequest) returns (GetSoftwareVersionResponse) {}
 }  
 

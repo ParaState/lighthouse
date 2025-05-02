@@ -466,7 +466,7 @@ impl InitializedValidator {
                 let validator_public_key = committee_def.validator_public_key.clone();
                 let local_operator_id = operator_id;
                 let mut committee =
-                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, log, operator_channels);
+                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, log, operator_channels).await;
                 committee.add_operator(
                     local_operator_id,
                     Box::new(LocalOperator {

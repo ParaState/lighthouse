@@ -1,9 +1,12 @@
 use bls::SecretKey;
+use dvf_utils::SOFTWARE_VERSION;
 use dvf_utils::VERSION;
 use safestake_crypto::secp::{Digest, Signature};
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::safestake_server::Safestake;
 use safestake_operator::proto::safestake_server::SafestakeServer;
+use safestake_operator::proto::GetSoftwareVersionRequest;
+use safestake_operator::proto::GetSoftwareVersionResponse;
 use safestake_operator::proto::{
     AttestRequest, AttestResponse, CheckLivenessRequest, CheckLivenessResponse,
     GetSignatureRequest, GetSignatureResponse, ProposeBlindedBlockRequest,
@@ -244,7 +247,7 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
         //     .map_err(|e| Status::internal(format!("failed to sign message {:?}", e)))?;
         Ok(Response::new(CheckLivenessResponse {
             // signature: bincode::serialize(&sig).unwrap(),
-            signature: vec![]
+            signature: vec![],
         }))
     }
 
@@ -448,6 +451,14 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
             .await?;
 
         Ok(Response::new(ProposeBlindedBlockResponse { msg: output }))
+    }
+
+    async fn get_software_version(
+        &self,
+        _: Request<GetSoftwareVersionRequest>
+    ) -> Result<Response<GetSoftwareVersionResponse>, Status> {
+
+        Ok(Response::new(GetSoftwareVersionResponse { software_vresion: SOFTWARE_VERSION }))
     }
 }
 

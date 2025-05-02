@@ -6,19 +6,23 @@ use crate::{NODE_SECRET, SAFESTAKE_API};
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use async_trait::async_trait;
 use chrono::prelude::{DateTime, Utc};
-use dvf_utils::{invalid_addr, DvfError};
+use dvf_utils::{invalid_addr, DvfError, OUTDATE_SOFTWARE_VERSION, SOFTWARE_VERSION};
 use futures::future::join_all;
 use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
-use slog::Logger;
+use slog::{error, info, Logger};
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use tonic::transport::Endpoint;
+use tokio::time::sleep;
 use types::{AttestationData, Hash256, PublicKey, Signature};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tonic::transport::Channel;
 use crate::CHANNEL_SIZE;
+use crate::proto::safestake_client::SafestakeClient;
+use crate::proto::*; 
+use crate::RPC_REQUEST_TIMEOUT;
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -152,7 +156,7 @@ impl DvfOperatorCommittee {
         self.get_backup_id(nonce) == self.operator_id
     }
 
-    pub fn from_definition(
+    pub async fn from_definition(
         operator_id: u32,
         def: OperatorCommitteeDefinition,
         log: Logger,
@@ -178,6 +182,39 @@ impl DvfOperatorCommittee {
                 .unwrap()
                 .connect_lazy()
             };
+
+            let mut client = SafestakeClient::new(channel.clone());
+            let request = tonic::Request::new(GetSoftwareVersionRequest{});
+
+            let version = tokio::select! {
+                result = client.get_software_version(request) => {
+                    match result {
+                        Ok(resp) => {
+                            let version = resp.into_inner().software_vresion;
+                            info!(
+                                log,
+                                "operator software";
+                                "operator" => def.operator_ids[i],
+                                "version" => version
+                            );
+                            version
+                        },
+                        Err(_) => {
+                            OUTDATE_SOFTWARE_VERSION
+                        }
+                    }
+                },
+                _ = sleep(RPC_REQUEST_TIMEOUT) => {
+                    error!(
+                        log,
+                        "operator liveness timeout";
+                        "operator" => def.operator_ids[i],
+                    );
+                    SOFTWARE_VERSION
+                }
+            };
+
+
             let operator = RemoteOperator {
                 self_operator_secretkey: node_secret_key.clone(),
                 self_operator_id: operator_id,
@@ -188,6 +225,7 @@ impl DvfOperatorCommittee {
                 shared_public_key: def.operator_public_keys[i].clone(),
                 logger: log.clone(),
                 channel: channel,
+                software_version: version
             };
             committee.add_operator(def.operator_ids[i], Box::new(operator));
         }
