@@ -10,7 +10,7 @@ use dvf_utils::{invalid_addr, DvfError, OUTDATE_SOFTWARE_VERSION, SOFTWARE_VERSI
 use futures::future::join_all;
 use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
-use slog::{error, info, Logger};
+use slog::{error, info, Logger, warn};
 use tonic::Code;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
@@ -192,20 +192,24 @@ impl DvfOperatorCommittee {
                     match result {
                         Ok(resp) => {
                             let version = resp.into_inner().software_vresion;
-                            info!(
-                                log,
-                                "operator software";
-                                "operator" => def.operator_ids[i],
-                                "version" => version
-                            );
                             version
                         },
                         Err(e) => {
                             match e.code() {
                                 Code::Unimplemented => {
+                                    warn!(
+                                        log,
+                                        "operator outdated";
+                                        "operator" => def.operator_ids[i]
+                                    );
                                     OUTDATE_SOFTWARE_VERSION
                                 },
                                 _ => {
+                                    warn!(
+                                        log,
+                                        "operator software error";
+                                        "operator" => def.operator_ids[i]
+                                    );
                                     SOFTWARE_VERSION
                                 }
                             }
@@ -221,7 +225,12 @@ impl DvfOperatorCommittee {
                     SOFTWARE_VERSION
                 }
             };
-
+            info!(
+                log,
+                "operator software";
+                "operator" => def.operator_ids[i],
+                "version" => version
+            );
 
             let operator = RemoteOperator {
                 self_operator_secretkey: node_secret_key.clone(),
