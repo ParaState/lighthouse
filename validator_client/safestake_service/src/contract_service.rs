@@ -886,7 +886,8 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
             logger,
             "setting fee recipient";
             "validator public key" => %validator_public_key,
-            "fee recipient address" => %fee_recipient
+            "fee recipient address" => %fee_recipient,
+            "timestamp" => %block_timestamp
         );
     }
     Ok(())
@@ -1437,6 +1438,50 @@ async fn test_rpc_operator_id() {
     println!("{:?}", last_id )
 }
 
+
+#[tokio::test]
+async fn test_rpc_query_validator() {
+    use alloy_primitives::address;
+    use alloy_rpc_types::BlockId;
+    use alloy_rpc_types::BlockNumberOrTag;
+    use alloy_rpc_types::BlockTransactionsKind;
+    use safestake_crypto::secret::{Export, Secret};
+    let rpc_url = "https://ethereum-rpc.publicnode.com"
+        .parse::<reqwest::Url>()
+        .unwrap();
+    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let registry_address = address!("1a1f82f0365571A0b06df0992FC4D1BCc5Fdc6aD");
+    let network_address = address!("829f3c089fE315FCB2BC9506B237BB56b7c3335B");
+    let config_address = address!("07FA0F7f3C67e4cdE0FC23A072dcD712CF9a06C1");
+    let registry_contract = SafeStakeRegistryContract::new(
+        registry_address,
+        provider.clone(),
+    );
+
+    let config_contract = SafeStakeConfigContract::new(
+        config_address,
+        provider.clone(),
+    );
+
+    let network_contract = SafeStakeNetworkContract::new(
+        network_address,
+        provider.clone(),
+    );
+
+    let va_pk = hex::decode("89275eac877090faa1d713b0738d3d67651e3fac384508d1da5508af576a2ff9e055a247aa3da804dc4c6346db453724").unwrap();
+    let pk = PublicKey::deserialize(&va_pk).unwrap();
+    let (owner, releated_ops) = registry_contract.query_validator_data(&pk).await.unwrap();
+    let block = network_contract.query_validator_registration_block(&pk).await.unwrap();
+    let timestamp = qeury_block_timestamp(&provider, block).await;
+    let validator = Validator {
+        owner: owner.clone(),
+        public_key: pk.clone(),
+        releated_operators: releated_ops,
+        active: true,
+        registration_timestamp: timestamp
+    };
+    println!("{:?}", timestamp )
+}
 
 #[tokio::test]
 async fn test_dkg_decrypt() {

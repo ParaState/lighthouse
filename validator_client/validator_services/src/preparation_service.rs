@@ -21,7 +21,7 @@ use safestake_database::SafeStakeDatabase;
 const PROPOSER_PREPARATION_LOOKAHEAD_EPOCHS: u64 = 2;
 
 /// Number of epochs to wait before re-submitting validator registration.
-const EPOCHS_PER_VALIDATOR_REGISTRATION_SUBMISSION: u64 = 1;
+const EPOCHS_PER_VALIDATOR_REGISTRATION_SUBMISSION: u64 = 5;
 
 /// Builds an `PreparationService`.
 #[derive(Default)]
@@ -238,11 +238,12 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
         let slot_duration = Duration::from_secs(spec.seconds_per_slot);
 
         let executor = self.context.executor.clone();
-
+        let genesis_timestamp = spec.min_genesis_time;
+        let seconds_per_slot = spec.seconds_per_slot;
         let validator_registration_fut = async move {
             loop {
                 // Poll the endpoint immediately to ensure fee recipients are received.
-                if let Err(e) = self.register_validators().await {
+                if let Err(e) = self.register_validators(genesis_timestamp, seconds_per_slot).await {
                     error!(log,"Error during validator registration";"error" => ?e);
                 }
 
@@ -376,7 +377,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
     }
 
     /// Register validators with builders, used in the blinded block proposal flow.
-    async fn register_validators(&self) -> Result<(), String> {
+    async fn register_validators(&self, genesis_timestamp: u64, seconds_per_slot: u64) -> Result<(), String> {
         let registration_keys = self.collect_validator_registration_keys();
 
         let mut changed_keys = vec![];
@@ -396,10 +397,11 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
         // Check if any have changed or it's been `EPOCHS_PER_VALIDATOR_REGISTRATION_SUBMISSION`.
         if let Some(slot) = self.slot_clock.now() {
             if slot % (E::slots_per_epoch() * EPOCHS_PER_VALIDATOR_REGISTRATION_SUBMISSION) == 0 {
-                self.publish_validator_registration_data(registration_keys)
+                let timestamp = genesis_timestamp + slot.as_u64() * seconds_per_slot;
+                self.publish_validator_registration_data(registration_keys, timestamp)
                     .await?;
             } else if !changed_keys.is_empty() {
-                self.publish_validator_registration_data(changed_keys)
+                self.publish_validator_registration_data(changed_keys, 1746712192)
                     .await?;
             }
         }
@@ -410,6 +412,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
     async fn publish_validator_registration_data(
         &self,
         registration_keys: Vec<ValidatorRegistrationKey>,
+        timestamp: u64
     ) -> Result<(), String> {
         let log = self.context.log();
 
@@ -423,30 +426,30 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationService<T, E> {
             let signed_data = if let Some(signed_data) = cached_registration_opt {
                 signed_data
             } else {
-                let timestamp =
-                    if let Some(timestamp) = self.builder_registration_timestamp_override {
-                        timestamp
-                    } else {
-                        let timestamp = match self.safestake_database.with_transaction(|tx| {
-                            self.safestake_database
-                                .query_validator_registration_timestamp(
-                                    tx,
-                                    &key.pubkey.decompress().unwrap(),
-                                )
-                        }) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                debug!(
-                                    log,
-                                    "Unable to find registration timestamp";
-                                    "error" => %e,
-                                    "validator public key" => %&key.pubkey
-                                );
-                                1733917155
-                            }
-                        };
-                        timestamp
-                    };
+                // let timestamp =
+                //     if let Some(timestamp) = self.builder_registration_timestamp_override {
+                //         timestamp
+                //     } else {
+                //         let timestamp = match self.safestake_database.with_transaction(|tx| {
+                //             self.safestake_database
+                //                 .query_validator_registration_timestamp(
+                //                     tx,
+                //                     &key.pubkey.decompress().unwrap(),
+                //                 )
+                //         }) {
+                //             Ok(t) => t,
+                //             Err(e) => {
+                //                 debug!(
+                //                     log,
+                //                     "Unable to find registration timestamp";
+                //                     "error" => %e,
+                //                     "validator public key" => %&key.pubkey
+                //                 );
+                //                 1733917155
+                //             }
+                //         };
+                //         timestamp
+                //     };
 
                 let ValidatorRegistrationKey {
                     fee_recipient,
