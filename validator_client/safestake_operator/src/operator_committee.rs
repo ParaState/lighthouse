@@ -6,24 +6,31 @@ use crate::{NODE_SECRET, SAFESTAKE_API};
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use async_trait::async_trait;
 use chrono::prelude::{DateTime, Utc};
-use dvf_utils::{invalid_addr, DvfError, OUTDATE_SOFTWARE_VERSION, SOFTWARE_VERSION};
+use dvf_utils::{invalid_addr, DvfError, SOFTWARE_VERSION};
 use futures::future::join_all;
 use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
-use slog::{error, info, Logger, warn};
-use tonic::Code;
+use slog::{info, Logger, warn};
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use tonic::transport::Endpoint;
-use tokio::time::sleep;
 use types::{AttestationData, Hash256, PublicKey, Signature};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tonic::transport::Channel;
 use crate::CHANNEL_SIZE;
-use crate::proto::safestake_client::SafestakeClient;
-use crate::proto::*; 
-use crate::RPC_REQUEST_TIMEOUT;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct ApiResponse {
+    code: u32,
+    message: String,
+    data: Option<OperatorData>,
+}
+#[derive(Debug, Deserialize)]
+struct OperatorData {
+    last_version: String,
+}
 
 pub struct DvfOperatorCommittee {
     pub node_secret_key: SecretKey,
@@ -157,7 +164,7 @@ impl DvfOperatorCommittee {
         self.get_backup_id(nonce) == self.operator_id
     }
 
-    pub async fn from_definition(
+    pub fn from_definition(
         operator_id: u32,
         def: OperatorCommitteeDefinition,
         log: Logger,
@@ -178,11 +185,6 @@ impl DvfOperatorCommittee {
             }
             let channel = {
                 let mut channels = operator_channels.write();
-                info!(
-                    log,
-                    "get channel";
-                    "validator public" => def.validator_public_key.as_hex_string()
-                );
                 match channels.get(&def.operator_ids[i]) {
                     None => {
                         let mut c = vec![];
@@ -202,58 +204,7 @@ impl DvfOperatorCommittee {
                     }
                 }
             };
-            // let channel = match operator_channels.read().get(&def.operator_ids[i]) {
-            //     Some(c) => {
-            //         let mut rng = rand::thread_rng();
-            //         let random_index: usize = rng.next_u64() as usize;
-            //         c[random_index % CHANNEL_SIZE].clone()
-            //     },
-            //     None => Endpoint::from_shared(format!("http://{}", addr.to_string()))
-            //     .unwrap()
-            //     .connect_lazy()
-            // };
-
-            let mut client = SafestakeClient::new(channel.clone());
-            let request = tonic::Request::new(GetSoftwareVersionRequest{});
-
-            let version = tokio::select! {
-                result = client.get_software_version(request) => {
-                    match result {
-                        Ok(resp) => {
-                            let version = resp.into_inner().software_vresion;
-                            version
-                        },
-                        Err(e) => {
-                            match e.code() {
-                                Code::Unimplemented => {
-                                    warn!(
-                                        log,
-                                        "operator outdated";
-                                        "operator" => def.operator_ids[i]
-                                    );
-                                    OUTDATE_SOFTWARE_VERSION
-                                },
-                                _ => {
-                                    warn!(
-                                        log,
-                                        "operator software error";
-                                        "operator" => def.operator_ids[i]
-                                    );
-                                    SOFTWARE_VERSION
-                                }
-                            }
-                        }
-                    }
-                },
-                _ = sleep(RPC_REQUEST_TIMEOUT) => {
-                    error!(
-                        log,
-                        "operator liveness timeout";
-                        "operator" => def.operator_ids[i],
-                    );
-                    SOFTWARE_VERSION
-                }
-            };
+            let version = get_operator_version(log.clone(),  def.operator_ids[i]);
             info!(
                 log,
                 "operator software";
@@ -322,6 +273,40 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     let id = u64::from_le_bytes(little_endian);
     id
 }
+
+pub fn get_operator_version(log: Logger, operator_id: u32) -> u64 {
+    let url_str = format!("{}{}", SAFESTAKE_API.get().unwrap(), operator_id);
+    let resp = match ureq::post(&url_str).call() {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(log, "HTTP request failed: {}", e);
+            return SOFTWARE_VERSION;
+        }
+    };
+    let resp_str = resp.into_string().unwrap();
+    let api: ApiResponse = match serde_json::from_str(&resp_str) {
+        Ok(api) => api,
+        Err(e) => {
+            warn!(log, "JSON parse failed: {}", e);
+            return SOFTWARE_VERSION;
+        }
+    };
+    let data = match api.data {
+        Some(d) => d,
+        None => {
+            warn!(log, "No data field in response");
+            return SOFTWARE_VERSION;
+        }
+    };
+    match data.last_version.parse::<u64>() {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(log, "Parse last_version failed: {}", e);
+            SOFTWARE_VERSION
+        }
+    }
+}
+
 
 #[tokio::test]
 async fn test_collect() {
