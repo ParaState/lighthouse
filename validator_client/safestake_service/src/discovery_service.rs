@@ -265,14 +265,18 @@ impl DiscoveryService {
                                     );
                                     committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
-                                    if let Some(addr) = queried_addr {
-                                        let mut c = vec![];
-                                        for _i in 0..CHANNEL_SIZE {
-                                            c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                                            .unwrap()
-                                            .connect_lazy());
-                                        }
-                                        operator_channels.write().insert(committee_def.operator_ids[i], c);
+                                    // if let Some(addr) = queried_addr {
+                                    //     let mut c = vec![];
+                                    //     for _i in 0..CHANNEL_SIZE {
+                                    //         c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                                    //         .unwrap()
+                                    //         .connect_lazy());
+                                    //     }
+                                    //     operator_channels.write().insert(committee_def.operator_ids[i], c);
+                                    // }
+                                    {
+                                        let mut c = operator_channels.write();
+                                        c.remove(&committee_def.operator_ids[i]);
                                     }
                                 }
                             }

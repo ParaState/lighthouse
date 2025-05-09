@@ -173,16 +173,40 @@ impl DvfOperatorCommittee {
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
-            let channel = match operator_channels.read().get(&def.operator_ids[i]) {
-                Some(c) => {
-                    let mut rng = rand::thread_rng();
-                    let random_index: usize = rng.next_u64() as usize;
-                    c[random_index % CHANNEL_SIZE].clone()
-                },
-                None => Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                .unwrap()
-                .connect_lazy()
+            if operator_id == def.operator_ids[i] {
+                continue;
+            }
+            let channel = {
+                let mut channels = operator_channels.write();
+                match channels.get_mut(&def.operator_ids[i]) {
+                    None => {
+                        let mut c = vec![];
+                        for _i in 0..CHANNEL_SIZE {
+                            c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
+                            .unwrap()
+                            .connect_lazy());
+                        }
+                        let channel = c[0].clone();
+                        channels.insert(def.operator_ids[i], c);
+                        channel
+                    },
+                    Some(c) => {
+                        let mut rng = rand::thread_rng();
+                        let random_index: usize = rng.next_u64() as usize;
+                        c[random_index % CHANNEL_SIZE].clone()
+                    }
+                }
             };
+            // let channel = match operator_channels.read().get(&def.operator_ids[i]) {
+            //     Some(c) => {
+            //         let mut rng = rand::thread_rng();
+            //         let random_index: usize = rng.next_u64() as usize;
+            //         c[random_index % CHANNEL_SIZE].clone()
+            //     },
+            //     None => Endpoint::from_shared(format!("http://{}", addr.to_string()))
+            //     .unwrap()
+            //     .connect_lazy()
+            // };
 
             let mut client = SafestakeClient::new(channel.clone());
             let request = tonic::Request::new(GetSoftwareVersionRequest{});
