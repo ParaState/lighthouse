@@ -178,7 +178,11 @@ impl DvfOperatorCommittee {
             }
             let channel = {
                 let mut channels = operator_channels.write();
-                match channels.get_mut(&def.operator_ids[i]) {
+                info!(
+                    log,
+                    "get channel";
+                );
+                match channels.get(&def.operator_ids[i]) {
                     None => {
                         let mut c = vec![];
                         for _i in 0..CHANNEL_SIZE {
