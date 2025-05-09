@@ -181,6 +181,7 @@ impl DvfOperatorCommittee {
                 info!(
                     log,
                     "get channel";
+                    "validator public" => def.validator_public_key.as_hex_string()
                 );
                 match channels.get(&def.operator_ids[i]) {
                     None => {
