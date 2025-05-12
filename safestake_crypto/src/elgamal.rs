@@ -209,4 +209,37 @@ mod tests {
         );
         println!("hash: {:?}", hash);
     }
+
+    #[test]
+    fn test_wallet_encrypt_decrypt() {
+
+        let sk = "6485c8d512ae8634a51fcf17d92ff0cc892448700e03b92a0935c0b07e819098";
+        let sk_bytes = hex::decode(&sk).unwrap();
+        if sk_bytes.len() != 32 {
+            panic!("invalid secret key length");
+        }  
+        let sk = SecpSecretKey(sk_bytes.as_slice().try_into().unwrap());
+        let pk = PublicKey::from_slice(&hex::decode("04e07c5b45b1e5e96e3cdb0655558e0154ae33d225f906c1784814e44f6c2f766b0699abf4902f02c049343a9071a12f80cddaa08b0bbb644c5551d8b34592f33a").unwrap()).unwrap();
+        let secp_pk = SecpPublicKey(pk.serialize());
+        let plain_text = "hello world";
+        let encrypted_data = {
+            let rng = rand::thread_rng();
+            let mut elgamal = Elgamal::new(rng);
+            elgamal
+                .encrypt(plain_text.as_bytes(), &secp_pk)
+                .unwrap()
+        };
+
+        let decrypted_data = {
+            let rng = rand::thread_rng();
+            let mut elgamal = Elgamal::new(rng);
+            elgamal
+                .decrypt(&encrypted_data, &sk)
+                .unwrap()
+                .to_vec()
+        };
+
+        assert_eq!(plain_text.as_bytes(), decrypted_data.as_slice());
+    }
+
 }

@@ -412,7 +412,7 @@ async fn test_query_boot() {
     use base64::prelude::*;
     let request = tonic::Request::new(QueryNodeAddressRequest {
         version: VERSION,
-        operator_public_key: BASE64_STANDARD.decode("AhVginpVNTWvZ5gFxBZUl4Tq+huTbrhcdStGsGXdoKS/").unwrap(),
+        operator_public_key: BASE64_STANDARD.decode("A3jwUQHVMTWjbTx+I7zwmvESmnN+0qZtbsj9tlPKcjyN").unwrap(),
     });
     let mut client = BootnodeClient::connect(format!("http://18.141.189.105:9005")).await.unwrap();
     match client.query_node_address(request).await {

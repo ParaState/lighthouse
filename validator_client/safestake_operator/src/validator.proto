@@ -11,6 +11,9 @@ message ValidatorGenerationRequest {
     string deposit_data = 6;
     optional bytes signature = 7;
     bytes transaction_hash = 8;
+    bytes encrypted_shared_key_owner_public_key = 9;
+    bytes owner = 10;
+    bytes owner_public_key = 11;
 }
 
 message ValidatorGenerationResponse {

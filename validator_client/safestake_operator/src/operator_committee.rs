@@ -275,7 +275,7 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
 }
 
 pub fn get_operator_version(log: Logger, operator_id: u32) -> u64 {
-    let url_str = format!("{}{}", SAFESTAKE_API.get().unwrap(), operator_id);
+    let url_str = format!("{}x/operator/{}", SAFESTAKE_API.get().unwrap(), operator_id);
     let resp = match ureq::post(&url_str).call() {
         Ok(r) => r,
         Err(e) => {

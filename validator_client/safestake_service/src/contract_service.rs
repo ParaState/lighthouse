@@ -26,6 +26,7 @@ use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
 use slog::{error, info, warn, Logger};
 use slot_clock::SlotClock;
+use secp256k1::PublicKey as Secp256k1PublicKey;
 use std::fs::{remove_dir_all, remove_file, File};
 use std::net::SocketAddr;
 use std::path::Path;
@@ -117,6 +118,8 @@ sol!(
     contract SafeStakeClusterNode {
         event ValidatorDepositDataGeneration(
             bytes clusterNodePublicKey,
+            address owner,
+            bytes ownerPubkey,
             uint256 validatorCount,
             uint32[] operatorIds,
             uint256 depositAmount,
@@ -125,6 +128,7 @@ sol!(
 
         event ValidatorExitDataGeneration(
             bytes clusterNodePublicKey,
+            address owner,
             bytes[] validatorPubKeys,
             uint256 activeEpoch
         );
@@ -903,6 +907,8 @@ async fn handle_validator_key_generation<E: EthSpec>(
 ) -> Result<(), String> {
     let SafeStakeClusterNode::ValidatorDepositDataGeneration{
         clusterNodePublicKey,
+        owner,
+        ownerPubkey,
         validatorCount,
         operatorIds,
         depositAmount,
@@ -971,16 +977,27 @@ async fn handle_validator_key_generation<E: EthSpec>(
         let cluster_node_public_key = SecpPublicKey(clusterNodePublicKey.as_ref().try_into().unwrap());
         sender.send((cluster_node_public_key, tx)).await.unwrap();
         let addr = rx.await.unwrap().ok_or(format!("failed to find the socket address of cluster node {}", cluster_node_public_key.base64()))?;
+
+        let owner_public_key = Secp256k1PublicKey::from_slice(&ownerPubkey).map_err(|e| {
+            error!(
+                logger,
+                "failed to deserialize owner public key";
+                "owner public key" => %ownerPubkey,
+                "error" => %e
+            );
+            format!("failed to deserialize owner public key")
+        })?;
+
         for _i in 0..count {
             let dkg = DKGMalicious::new(config.operator_id as u64, io.clone(), threshold);
             let (keypair, validator_public_key, shared_public_keys) = dkg
                 .run()
                 .await
                 .map_err(|e| format!("run dkg failed {:?}", e))?;
+            let shared_secret_key = keypair.sk.clone().serialize();
             let encrypted_shared_private_key = {
                 let rng = rand::thread_rng();
                 let mut elgamal = Elgamal::new(rng);
-                let shared_secret_key = keypair.sk.serialize();
                 let encrypted_shared_secret_key = elgamal
                     .encrypt(shared_secret_key.as_bytes(), &config.node_secret.name)
                     .map_err(|_e| format!("elgamal encrypt shared secret failed "))?
@@ -1026,6 +1043,18 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 deposit_data_root,
                 deposit_cli_version: format!("SafeSake Operator v{}.{}", dvf_utils::MAJOR_VERSION, dvf_utils::MINOR_VERSION),
             };
+            
+            let encrypted_shared_key_owner_public_key = {
+                let rng = rand::thread_rng();
+                let mut elgamal = Elgamal::new(rng);
+                let pk = SecpPublicKey(owner_public_key.serialize());
+                let encrypted_shared_secret_key = elgamal
+                    .encrypt(shared_secret_key.as_bytes(), &pk)
+                    .map_err(|_e| format!("elgamal encrypt shared secret failed "))?
+                    .to_bytes();
+                encrypted_shared_secret_key
+            };
+
             let request = tonic::Request::new(ValidatorGenerationRequest {
                 operator_id: config.operator_id,
                 operator_public_key: config.node_secret.name.0.to_vec(),
@@ -1034,7 +1063,10 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 shared_public_key: shared_public_key.serialize().to_vec(),
                 deposit_data: serde_json::to_string(&deposit_json).unwrap(),
                 signature: None,
-                transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec()
+                transaction_hash: log.transaction_hash.unwrap().as_slice().to_vec(),
+                encrypted_shared_key_owner_public_key,
+                owner:  owner.to_vec(),
+                owner_public_key: ownerPubkey.to_vec(),
             });
             let mut client = GrpcClient::new(Endpoint::from_shared(format!("http://{}", addr.to_string())).unwrap().connect_lazy());
             tokio::select! {

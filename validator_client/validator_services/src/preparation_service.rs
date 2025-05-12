@@ -30,9 +30,9 @@ pub struct PreparationServiceBuilder<T: SlotClock + 'static, E: EthSpec> {
     slot_clock: Option<T>,
     beacon_nodes: Option<Arc<BeaconNodeFallback<T, E>>>,
     context: Option<RuntimeContext<E>>,
-    builder_registration_timestamp_override: Option<u64>,
+    _builder_registration_timestamp_override: Option<u64>,
     validator_registration_batch_size: Option<usize>,
-    safestake_database: Option<SafeStakeDatabase>,
+    _safestake_database: Option<SafeStakeDatabase>,
 }
 
 impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
@@ -42,9 +42,9 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
             slot_clock: None,
             beacon_nodes: None,
             context: None,
-            builder_registration_timestamp_override: None,
+            _builder_registration_timestamp_override: None,
             validator_registration_batch_size: None,
-            safestake_database: None,
+            _safestake_database: None,
         }
     }
 
@@ -72,7 +72,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
         mut self,
         builder_registration_timestamp_override: Option<u64>,
     ) -> Self {
-        self.builder_registration_timestamp_override = builder_registration_timestamp_override;
+        self._builder_registration_timestamp_override = builder_registration_timestamp_override;
         self
     }
 
@@ -85,7 +85,7 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
     }
 
     pub fn safestake_database(mut self, safestake_database: SafeStakeDatabase) -> Self {
-        self.safestake_database = Some(safestake_database);
+        self._safestake_database = Some(safestake_database);
         self
     }
 
@@ -104,14 +104,14 @@ impl<T: SlotClock + 'static, E: EthSpec> PreparationServiceBuilder<T, E> {
                 context: self
                     .context
                     .ok_or("Cannot build PreparationService without runtime_context")?,
-                builder_registration_timestamp_override: self
-                    .builder_registration_timestamp_override,
+                _builder_registration_timestamp_override: self
+                    ._builder_registration_timestamp_override,
                 validator_registration_batch_size: self.validator_registration_batch_size.ok_or(
                     "Cannot build PreparationService without validator_registration_batch_size",
                 )?,
                 validator_registration_cache: RwLock::new(HashMap::new()),
-                safestake_database: self
-                    .safestake_database
+                _safestake_database: self
+                    ._safestake_database
                     .ok_or("Cannot build PreparationService without safestake_database")?,
             }),
         })
@@ -124,12 +124,12 @@ pub struct Inner<T, E: EthSpec> {
     slot_clock: T,
     beacon_nodes: Arc<BeaconNodeFallback<T, E>>,
     context: RuntimeContext<E>,
-    builder_registration_timestamp_override: Option<u64>,
+    _builder_registration_timestamp_override: Option<u64>,
     // Used to track unpublished validator registration changes.
     validator_registration_cache:
         RwLock<HashMap<ValidatorRegistrationKey, SignedValidatorRegistrationData>>,
     validator_registration_batch_size: usize,
-    safestake_database: SafeStakeDatabase,
+    _safestake_database: SafeStakeDatabase,
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
