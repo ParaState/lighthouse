@@ -40,6 +40,9 @@ sensitive_url = { workspace = true }
 eth2 ={ workspace = true }
 safe_arith = { workspace = true }
 tree_hash = { workspace = true }
+beacon_node_fallback = { workspace = true }
+either = { workspace = true }
+
 validator_manager = { path = "../../validator_manager" }
 alloy-contract = "0.6.4"
 alloy-primitives = "0.8.13"

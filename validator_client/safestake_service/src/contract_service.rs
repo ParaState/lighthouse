@@ -46,7 +46,7 @@ use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
 use parking_lot::RwLock;
 use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials, get_validator_index_for_exit};
 use safestake_operator::proto::{
-    ValidatorGenerationRequest, ValidatorExitResponse, ValidatorGenerationResponse, ValidatorExitRequest
+    ValidatorGenerationRequest
 };
 use safestake_operator::proto::grpc_client::GrpcClient;
 use safestake_operator::{CHANNEL_SIZE, RPC_REQUEST_TIMEOUT};

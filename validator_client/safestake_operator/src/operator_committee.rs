@@ -138,6 +138,18 @@ impl TOperatorCommittee for DvfOperatorCommittee {
         join_all(propose_futures).await;
     }
 
+    async fn broadcast_attestation(
+        &self,
+        attestation: &[u8],
+        validator_index: u64,
+        signing_root: Hash256
+    ) {
+        let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
+            op.broadcast_attestation(attestation, validator_index, signing_root).await
+        });
+        join_all(broadcast_futures).await;
+    }
+
     fn get_leader_id(&self, nonce: u64) -> u32 {
         let validator_id = convert_validator_public_key_to_id(&self.validator_public_key.serialize());
         let index = (nonce + validator_id) % self.operators.len() as u64;

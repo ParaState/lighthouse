@@ -68,6 +68,19 @@ message ProposeBlindedBlockResponse {
     string msg = 1;
 }
 
+message BroadcastAttestationRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes signing_root = 3;
+    bytes signing_root_signature = 4;
+    bytes attestation = 5;
+    uint64 validator_index = 6;
+}
+
+message BroadcastAttestationResponse {
+    string msg = 1;
+}
+
 // Inference is the inference service.
 service Safestake {
     rpc CheckLiveness(CheckLivenessRequest) returns (CheckLivenessResponse) {}
@@ -76,5 +89,6 @@ service Safestake {
     rpc ProposeFullBlock(ProposeFullBlockRequest) returns (ProposeFullBlockResponse) {}
     rpc ProposeBlindedBlock(ProposeBlindedBlockRequest) returns (ProposeBlindedBlockResponse) {}
     rpc GetSoftwareVersion(GetSoftwareVersionRequest) returns (GetSoftwareVersionResponse) {}
+    rpc BroadcastAttestation(BroadcastAttestationRequest) returns (BroadcastAttestationResponse) {}
 }  
 

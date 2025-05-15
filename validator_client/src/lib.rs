@@ -609,7 +609,9 @@ impl<E: EthSpec> ProductionValidatorClient<E> {
             safestake_database,
             recv,
             &context.executor,
-            validator_keys
+            validator_keys,
+            context.eth2_config.spec.clone(),
+            beacon_nodes.clone(),
         );
 
         SafestakeService::serving(

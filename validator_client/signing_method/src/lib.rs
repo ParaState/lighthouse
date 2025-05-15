@@ -152,6 +152,23 @@ impl SigningMethod {
         }
     }
 
+    pub async fn broadcast_attestation<E: EthSpec>(
+        &self,
+        attestation: &Attestation<E>,
+        validator_index: u64,
+        signing_root: Hash256,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore {
+                operator_committee, ..
+            } => {
+                operator_committee
+                    .broadcast_attestation(&serde_json::to_vec(attestation).unwrap(), validator_index, signing_root)
+                    .await;
+            }
+            _ => {}
+        }
+    }
     pub async fn distributed_attest(
         &self,
         domain_hash: Hash256,

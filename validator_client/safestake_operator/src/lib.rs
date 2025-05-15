@@ -101,6 +101,7 @@ pub trait TOperator: Sync + Send {
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);
     async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
+    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, signing_root: Hash256);
     fn shared_public_key(&self) -> PublicKey;
 }
 
@@ -132,6 +133,8 @@ impl TOperator for LocalOperator {
     fn shared_public_key(&self) -> PublicKey {
         self.share_public_key.clone()
     }
+
+    async fn broadcast_attestation(&self, _: &[u8], _: u64, _: Hash256) {}
 }
 
 pub struct RemoteOperator {
@@ -219,14 +222,14 @@ impl TOperator for RemoteOperator {
 
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
         let mut client = SafestakeClient::new(self.channel.clone());
-        let data = serde_json::to_string(attest_data).unwrap();
+        let data = serde_json::to_vec(attest_data).unwrap();
         let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey)
             .unwrap();
 
         let sent_data = if self.software_version > OUTDATE_SOFTWARE_VERSION {
-            compress_data(data.as_bytes()).unwrap()
+            compress_data(&data).unwrap()
         } else {
-            data.as_bytes().to_vec()
+            data
         };
 
         let request = tonic::Request::new(AttestRequest {
@@ -266,6 +269,23 @@ impl TOperator for RemoteOperator {
                 );
             }
         }
+    }
+
+    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, signing_root: Hash256) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sent_data = compress_data(attestation).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&signing_root.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(BroadcastAttestationRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            signing_root: signing_root.0.to_vec(),
+            signing_root_signature: sig.flatten().to_vec(),
+            attestation: sent_data,
+            validator_index: validator_index,
+        });
+        tokio::spawn(async move {
+            let _ = client.broadcast_attestation(request).await;
+        });
     }
 
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256) {

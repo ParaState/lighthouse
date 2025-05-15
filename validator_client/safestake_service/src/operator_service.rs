@@ -11,12 +11,14 @@ use safestake_operator::proto::{
     AttestRequest, AttestResponse, CheckLivenessRequest, CheckLivenessResponse,
     GetSignatureRequest, GetSignatureResponse, ProposeBlindedBlockRequest,
     ProposeBlindedBlockResponse, ProposeFullBlockRequest, ProposeFullBlockResponse,
+    BroadcastAttestationRequest, BroadcastAttestationResponse,
 };
 use signing_method::SignableMessage;
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
 use slog::{error, info, Logger};
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
+use types::ChainSpec;
 use std::sync::Arc;
 use store::{database::leveldb_impl::LevelDB, DBColumn};
 use task_executor::TaskExecutor;
@@ -25,7 +27,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use types::{
     AbstractExecPayload, AttestationData, BeaconBlock, BlindedPayload, EthSpec, ExecPayload,
-    FullPayload, Hash256,
+    FullPayload, Hash256, Attestation,
 };
 use types::{PublicKey, Signature as BlsSignature};
 use parking_lot::RwLock;
@@ -37,17 +39,21 @@ use account_utils::default_operator_committee_definition_path;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use crate::config::Config;
 use safestake_operator::CHANNEL_SIZE;
-
-pub struct SafestakeService<E: EthSpec> {
+use beacon_node_fallback::{ApiTopic, BeaconNodeFallback};
+use slot_clock::SlotClock;
+use either::Either;
+pub struct SafestakeService<T: SlotClock + 'static, E: EthSpec> {
     logger: Logger,
     store: Arc<LevelDB<E>>,
     slashing_database: SlashingDatabase,
     safestake_database: SafeStakeDatabase,
-    validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
+    validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
+    beacon_nodes: Arc<BeaconNodeFallback<T, E>>,
+    spec: Arc<ChainSpec>
 }
 
-impl<E: EthSpec> SafestakeService<E> {
-    pub fn serving(base_port: u16, executor: &TaskExecutor, operator_service: SafestakeService<E>) {
+impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
+    pub fn serving(base_port: u16, executor: &TaskExecutor, operator_service: SafestakeService<T, E>) {
         let addr = format!("0.0.0.0:{}", base_port).parse().unwrap();
         executor.spawn(
             async move {
@@ -68,7 +74,9 @@ impl<E: EthSpec> SafestakeService<E> {
         safestake_database: SafeStakeDatabase,
         mut rx: Receiver<(Hash256, BlsSignature, PublicKey)>,
         executor: &TaskExecutor,
-        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>
+        validator_keys: Arc<RwLock<HashMap<PublicKey, SecretKey>>>,
+        spec: Arc<ChainSpec>,
+        beacon_nodes: Arc<BeaconNodeFallback<T, E>>,
     ) -> Self {
         let log = logger.clone();
         let safestake_service = Self {
@@ -76,7 +84,9 @@ impl<E: EthSpec> SafestakeService<E> {
             store: store.clone(),
             slashing_database,
             safestake_database: safestake_database.clone(),
-            validator_keys
+            validator_keys,
+            spec: spec.clone(),
+            beacon_nodes: beacon_nodes.clone(),
         };
         let store_fut = async move {
             loop {
@@ -230,7 +240,7 @@ impl<E: EthSpec> SafestakeService<E> {
 }
 
 #[tonic::async_trait]
-impl<E: EthSpec> Safestake for SafestakeService<E> {
+impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
     async fn check_liveness(
         &self,
         request: Request<CheckLivenessRequest>,
@@ -459,6 +469,108 @@ impl<E: EthSpec> Safestake for SafestakeService<E> {
     ) -> Result<Response<GetSoftwareVersionResponse>, Status> {
 
         Ok(Response::new(GetSoftwareVersionResponse { software_vresion: SOFTWARE_VERSION }))
+    }
+
+    async fn broadcast_attestation(
+        &self,
+        request: Request<BroadcastAttestationRequest>,
+    ) -> Result<Response<BroadcastAttestationResponse>, Status> {
+        let req = request.into_inner();
+        let signing_root = Hash256::from(&req.signing_root.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &signing_root,
+            &req.signing_root_signature,
+            req.operator_id,
+        )?;
+
+        let signature = self
+            .store
+            .get_bytes(
+                DBColumn::SafeStake,
+                // &format!("0x{}", hex::encode(&req.validator_public_key)), 
+                signing_root.as_slice())
+            .map_err(|e| {
+                Status::internal(format!("failed to read signature {:?}", e))
+            })?;
+        if signature.is_none() {
+            error!(self.logger, "failed to find message's signature"; "signing root" => %signing_root);
+            return Err(Status::internal(format!(
+                "failed to find message's signature"
+            )));
+        }
+        info!(
+            self.logger,
+            "received broadcast attestation";
+            "validator index" => req.validator_index,
+        );
+        let attestation_bytes = safestake_operator::decompress_data(&req.attestation).unwrap();
+        let attestation: Attestation<E> = match serde_json::from_slice(&attestation_bytes) {
+            Ok(a) => a,
+            Err(e) => {
+                error!(self.logger, "deserialize attestation"; "error" => %e);
+                return Err(Status::internal(format!(
+                    "failed to deserialize attestation data"
+                )));
+            }
+        };
+
+        // lighthouse/validator_client/validator_services/src/attestation_service.rs:468
+        let log = self.logger.clone();
+        let slot = attestation.data().slot;
+        let committee_index = attestation.data().index;
+        let fork_name = self.spec.fork_name_at_slot::<E>(slot);
+        // Post the attestations to the BN.
+        match self
+            .beacon_nodes
+            .request(ApiTopic::Attestations, |beacon_node| {
+                let a = attestation.clone();
+                async move {
+                    if fork_name.electra_enabled() {
+                    let single_attestations = match a
+                        .to_single_attestation_with_attester_index(req.validator_index)
+                        {
+                            Ok(s) => s,
+                            Err(_) => {
+                                return Ok(())
+                            }
+                        };
+                    
+                    beacon_node
+                    .post_beacon_pool_attestations_v2::<E>(
+                        Either::Right(vec![single_attestations]),
+                        fork_name,
+                    )
+                    .await
+                    } else {
+                        beacon_node
+                            .post_beacon_pool_attestations_v1(&vec![a])
+                            .await
+                    }
+                }
+            })
+            .await
+        {
+            Ok(()) => info!(
+                log,
+                "Successfully published attestations by leader";
+                "validator_index" => req.validator_index,
+                "committee_index" => committee_index,
+                "slot" => slot.as_u64(),
+                "type" => "unaggregated",
+            ),
+            Err(e) => error!(
+                log,
+                "Unable to publish attestations";
+                "error" => %e,
+                "committee_index" => committee_index,
+                "slot" => slot.as_u64(),
+                "type" => "unaggregated",
+            ),
+        }
+
+
+
+        Ok(Response::new(BroadcastAttestationResponse { msg: String::new() }))
     }
 }
 

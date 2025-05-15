@@ -723,6 +723,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         validator_committee_position: usize,
         attestation: &mut Attestation<E>,
         current_epoch: Epoch,
+        validator_index: u64,
     ) -> Result<(), Error> {
         // Make sure the target epoch is not higher than the current epoch to avoid potential attacks.
         if attestation.data().target.epoch > current_epoch {
@@ -759,9 +760,11 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         domain_hash,
                         attestation.data()
                     ).await;
+                    let signable_msg = SignableMessage::AttestationData(attestation.data());
+                    let signing_root = signable_msg.signing_root(domain_hash);
                     let signature = signing_method
                         .get_signature::<E, BlindedPayload<E>>(
-                            SignableMessage::AttestationData(attestation.data()),
+                            signable_msg,
                             signing_context,
                             &self.spec,
                             &self.task_executor,
@@ -770,6 +773,13 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                     attestation
                         .add_signature(&signature, validator_committee_position)
                         .map_err(Error::UnableToSignAttestation)?;
+                    
+                    // broadcast the attestation to other operators
+                    signing_method.broadcast_attestation(
+                        &attestation,
+                        validator_index,
+                        signing_root
+                    ).await;
 
                     validator_metrics::inc_counter_vec(
                         &validator_metrics::SIGNED_ATTESTATIONS_TOTAL,

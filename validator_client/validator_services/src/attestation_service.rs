@@ -385,7 +385,7 @@ impl<T: SlotClock + 'static, E: EthSpec> AttestationService<T, E> {
                 return None;
             }
 
-            let mut attestation = match Attestation::<E>::empty_for_signing(
+            let mut attestation: Attestation<E> = match Attestation::<E>::empty_for_signing(
                 duty.committee_index,
                 duty.committee_length as usize,
                 attestation_data.slot,
@@ -414,6 +414,7 @@ impl<T: SlotClock + 'static, E: EthSpec> AttestationService<T, E> {
                     duty.validator_committee_index as usize,
                     &mut attestation,
                     current_epoch,
+                    duty.validator_index,
                 )
                 .await
             {

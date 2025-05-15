@@ -25,6 +25,7 @@ pub trait TOperatorCommittee: Send {
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);
     async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
+    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, domain_hash: Hash256);
     fn get_leader_id(&self, nonce: u64) -> u32;
     fn get_backup_id(&self, nonce: u64) -> u32;
 }
