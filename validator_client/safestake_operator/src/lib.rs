@@ -165,11 +165,10 @@ impl TOperator for RemoteOperator {
                 result = client.get_signature(request) => {
                     match result {
                         Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
-                        Err(e) => {
+                        Err(_) => {
                             warn!(
                                 self.logger,
                                 "failed to get remote operator's signature";
-                                "error" => %e,
                                 "retry" => i
                             );
                             sleep(Duration::from_millis(200)).await;

@@ -297,7 +297,7 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             let signature = self.store
                 .get_bytes(
                     DBColumn::SafeStake,
-                    &key)
+                    &req.msg)
                 .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
             if let Some(signature) = signature {
                 info!(self.logger, "local read signature (old version)"; "signing root" => %hex::encode(&req.msg));
