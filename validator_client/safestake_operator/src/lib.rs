@@ -180,6 +180,12 @@ impl TOperator for RemoteOperator {
                 }
             }
         }
+        error!(
+            self.logger,
+            "remote operator signature not found";
+            "operator" => self.operator_id,
+            "msg" => %msg
+        );
         Err(DvfError::SignatureNotFound(format!("{} not found", msg)))
     }
 
