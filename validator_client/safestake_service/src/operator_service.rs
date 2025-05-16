@@ -90,14 +90,28 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
         };
         let store_fut = async move {
             loop {
-                if let Some((msg, signature, _validator_public_key)) = rx.recv().await {
+                if let Some((msg, signature, validator_public_key)) = rx.recv().await {
                     info!(log, "local sign"; "signing root" => %hex::encode(msg));
+                    let mut key = msg.0.to_vec();
+                    key.extend_from_slice(&validator_public_key.serialize());
                     let _ = store.put_bytes(
                         DBColumn::SafeStake,
                         // &validator_public_key.as_hex_string(),
-                        &msg.0,
+                        &key,
                         &signature.serialize(),
                     );
+                    // Compatible with old versions, need to be deleted later
+                    if store.get_bytes(DBColumn::SafeStake,&msg.0).unwrap().is_none() {
+                        let mut key = msg.0.to_vec();
+                        key.extend_from_slice(&validator_public_key.serialize());
+                        info!(log, "local wirte signature (old version)"; "signing root" => %hex::encode(msg));
+                        let _ = store.put_bytes(
+                            DBColumn::SafeStake,
+                            // &validator_public_key.as_hex_string(),
+                            &msg.0,
+                            &signature.serialize(),
+                        );
+                    }
                 }
             }
         };
@@ -269,19 +283,30 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let _ = self
             .check_version_and_validator_public_key(req.version, &req.validator_public_key)
             .await?;
+        let mut key = req.msg.clone();
+        key.extend_from_slice(&req.validator_public_key);
         let signature = self
             .store
             .get_bytes(
                 DBColumn::SafeStake,
-                // &format!("0x{}", hex::encode(&req.validator_public_key)), 
-                &req.msg)
+                &key)
             .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
         if let Some(signature) = signature {
             Ok(Response::new(GetSignatureResponse { signature }))
         } else {
-            Err(Status::internal(format!(
-                "failed to find message's signature"
-            )))
+            let signature = self.store
+                .get_bytes(
+                    DBColumn::SafeStake,
+                    &key)
+                .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
+            if let Some(signature) = signature {
+                info!(self.logger, "local read signature (old version)"; "signing root" => %hex::encode(&req.msg));
+                Ok(Response::new(GetSignatureResponse { signature }))
+            } else {
+                Err(Status::internal(format!(
+                    "failed to find message's signature"
+                )))
+            }
         }
     }
 

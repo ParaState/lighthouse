@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, SecretKey as SecpSecretKey, Signature as SecpSignature,
 };
-use slog::{error, info, Logger};
+use slog::{error, info, Logger, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -155,7 +155,7 @@ impl TOperator for RemoteOperator {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError> {
         let mut client = SafestakeClient::new(self.channel.clone());
         
-        for _ in 0..3 {
+        for i in 0..3 {
             let request = tonic::Request::new(GetSignatureRequest {
                 version: VERSION,
                 msg: msg.0.to_vec(),
@@ -165,7 +165,13 @@ impl TOperator for RemoteOperator {
                 result = client.get_signature(request) => {
                     match result {
                         Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
-                        Err(_) => {
+                        Err(e) => {
+                            warn!(
+                                self.logger,
+                                "failed to get remote operator's signature";
+                                "error" => %e,
+                                "retry" => i
+                            );
                             sleep(Duration::from_millis(200)).await;
                         },
                     }

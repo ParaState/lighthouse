@@ -169,6 +169,24 @@ impl SigningMethod {
             _ => {}
         }
     }
+
+    pub async fn broadcast_block<E: EthSpec>(
+        &self,
+        signed_block: &Attestation<E>,
+        signing_root: Hash256,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore {
+                operator_committee, ..
+            } => {
+                // operator_committee
+                //     .broadcast_attestation(&serde_json::to_vec(attestation).unwrap(), validator_index, signing_root)
+                //     .await;
+            }
+            _ => {}
+        }
+    }
+
     pub async fn distributed_attest(
         &self,
         domain_hash: Hash256,
@@ -251,7 +269,7 @@ impl SigningMethod {
             genesis_validators_root,
         });
 
-        self.get_signature_from_root(signable_message, signing_root, executor, fork_info)
+        self.get_signature_from_root(signable_message, signing_root, executor, fork_info, spec)
             .await
     }
 
@@ -261,6 +279,7 @@ impl SigningMethod {
         signing_root: Hash256,
         executor: &TaskExecutor,
         fork_info: Option<ForkInfo>,
+        spec: &ChainSpec
     ) -> Result<Signature, Error> {
         match self {
             SigningMethod::LocalKeystore { voting_keypair, .. } => {
@@ -464,7 +483,7 @@ impl SigningMethod {
                     .unwrap();
                 if !only_aggregator || (only_aggregator && is_aggregator) {
                     let task_timeout =
-                        Duration::from_secs(E::default_spec().seconds_per_slot * 2 / 3);
+                        Duration::from_secs(spec.seconds_per_slot * 2 / 3);
                     let timeout = sleep(task_timeout);
                     let work = operator_committee.sign(signing_root, local_signature, &executor);
                     let start_time: DateTime<Utc> = Utc::now();

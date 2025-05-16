@@ -664,16 +664,24 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         &validator_metrics::SIGNED_BLOCKS_TOTAL,
                         &[validator_metrics::SUCCESS],
                     );
-
+                    let signable_message = SignableMessage::BeaconBlock(&block);
+                    let signing_root = signable_message.signing_root(domain_hash);
                     let signature = signing_method
                         .get_signature::<E, Payload>(
-                            SignableMessage::BeaconBlock(&block),
+                            signable_message,
                             signing_context,
                             &self.spec,
                             &self.task_executor,
                         )
                         .await?;
-                    Ok(SignedBeaconBlock::from_block(block, signature))
+                    let signed_block = SignedBeaconBlock::from_block(block, signature);
+                    
+                    // broadcast the attestation to other operators
+                    // signing_method.broadcast_attestation(
+                    //     &signed_block,
+                    //     signing_root
+                    // ).await;
+                    Ok(signed_block)
                 }
                 Ok(Safe::SameData) => {
                     warn!(
@@ -875,6 +883,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                 signing_root,
                 &self.task_executor,
                 None,
+                &self.spec
             )
             .await?;
 
