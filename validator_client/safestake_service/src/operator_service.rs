@@ -259,7 +259,8 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
         if signature.is_none() {
             error!(
                 self.logger,
-                "can't find signature when checking"
+                "can't find signature when checking";
+                "signing root" => hex::encode(domain_hash),
             );
             return Err(Status::internal(format!("failed to find signature for {:?}", hex::encode(domain_hash))));
         }
