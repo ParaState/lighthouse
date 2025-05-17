@@ -25,6 +25,7 @@ use types::{Hash256, Signature};
 use flate2::{write::GzEncoder, read::GzDecoder};
 use flate2::Compression;
 use std::io::{Write, Read};
+use tonic::Code;
 
 pub const CHANNEL_SIZE: usize = 32;
 
@@ -180,6 +181,42 @@ impl TOperator for RemoteOperator {
                 result = client.get_signature_v2(request) => {
                     match result {
                         Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
+                        Err(e) => {
+                            match e.code() {
+                                Code::Unimplemented => { break; }
+                                _ => {
+                                    warn!(
+                                        self.logger,
+                                        "failed to get remote operator's signature";
+                                        "retry" => i
+                                    );
+                                    sleep(Duration::from_millis(200)).await;
+                                }
+                            }
+                        },
+                    }
+                },
+                _ = sleep(RPC_REQUEST_TIMEOUT) => {
+                    error!(
+                        self.logger,
+                        "operator get signature timeout";
+                        "operator" => self.operator_id,
+                        "socket address" => self.base_address
+                    );
+                }
+            }
+        }
+
+        for i in 0..3 {
+            let request = tonic::Request::new(GetSignatureRequest {
+                version: VERSION,
+                msg: msg.0.to_vec(),
+                validator_public_key: self.validator_public_key.serialize().to_vec(),
+            });
+            tokio::select! {
+                result = client.get_signature(request) => {
+                    match result {
+                        Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
                         Err(_) => {
                             warn!(
                                 self.logger,
@@ -200,6 +237,7 @@ impl TOperator for RemoteOperator {
                 }
             }
         }
+
         error!(
             self.logger,
             "remote operator signature not found";

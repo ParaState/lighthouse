@@ -297,9 +297,6 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let _ = self
             .check_version_and_validator_public_key(req.version, &req.validator_public_key)
             .await?;
-        let mut key = req.msg.clone();
-        key.extend_from_slice(&req.validator_public_key);
-        
         let signature = self.store
             .get_bytes(
                 DBColumn::SafeStake,
