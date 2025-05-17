@@ -131,6 +131,7 @@ message SimpleDutyRequest {
 service Safestake {
     rpc CheckLiveness(CheckLivenessRequest) returns (CheckLivenessResponse) {}
     rpc GetSignature(GetSignatureRequest) returns (GetSignatureResponse) {}
+    rpc GetSignatureV2(GetSignatureRequest) returns (GetSignatureResponse) {}
     rpc AttestData(AttestRequest) returns (AttestResponse) {}
     rpc ProposeFullBlock(ProposeFullBlockRequest) returns (ProposeFullBlockResponse) {}
     rpc ProposeBlindedBlock(ProposeBlindedBlockRequest) returns (ProposeBlindedBlockResponse) {}

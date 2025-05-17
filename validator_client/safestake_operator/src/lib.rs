@@ -177,7 +177,7 @@ impl TOperator for RemoteOperator {
                 validator_public_key: self.validator_public_key.serialize().to_vec(),
             });
             tokio::select! {
-                result = client.get_signature(request) => {
+                result = client.get_signature_v2(request) => {
                     match result {
                         Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
                         Err(_) => {

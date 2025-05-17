@@ -299,6 +299,31 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             .await?;
         let mut key = req.msg.clone();
         key.extend_from_slice(&req.validator_public_key);
+        
+        let signature = self.store
+            .get_bytes(
+                DBColumn::SafeStake,
+                &req.msg)
+            .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
+        if let Some(signature) = signature {
+            info!(self.logger, "local read signature (old version)"; "signing root" => %hex::encode(&req.msg));
+            return Ok(Response::new(GetSignatureResponse { signature }));
+        }
+        Err(Status::internal(format!(
+            "failed to find message's signature"
+        )))
+    }
+
+    async fn get_signature_v2(
+        &self,
+        request: Request<GetSignatureRequest>,
+    ) -> Result<Response<GetSignatureResponse>, Status> {
+        let req = request.into_inner();
+        let _ = self
+            .check_version_and_validator_public_key(req.version, &req.validator_public_key)
+            .await?;
+        let mut key = req.msg.clone();
+        key.extend_from_slice(&req.validator_public_key);
         let signature = self
             .store
             .get_bytes(
@@ -306,22 +331,11 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
                 &key)
             .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
         if let Some(signature) = signature {
-            Ok(Response::new(GetSignatureResponse { signature }))
-        } else {
-            let signature = self.store
-                .get_bytes(
-                    DBColumn::SafeStake,
-                    &req.msg)
-                .map_err(|e| Status::internal(format!("failed to read signature {:?}", e)))?;
-            if let Some(signature) = signature {
-                info!(self.logger, "local read signature (old version)"; "signing root" => %hex::encode(&req.msg));
-                Ok(Response::new(GetSignatureResponse { signature }))
-            } else {
-                Err(Status::internal(format!(
-                    "failed to find message's signature"
-                )))
-            }
+            return Ok(Response::new(GetSignatureResponse { signature }));
         }
+        Err(Status::internal(format!(
+            "failed to find message's signature"
+        )))
     }
 
     async fn attest_data(
@@ -523,12 +537,6 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
     ) -> Result<Response<EmptyResponse>, Status> {
         let req = request.into_inner();
         let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
-        info!(
-            self.logger,
-            "received broadcast attestation";
-            "domain hash" => %domain_hash,
-            "validator public key" => hex::encode(&req.validator_public_key),
-        );
         self.check_operator_domain_hash_signature(
             &domain_hash,
             &req.domain_hash_signature,
