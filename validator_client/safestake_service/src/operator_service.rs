@@ -94,8 +94,6 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                     );
                     // Compatible with old versions, need to be deleted later
                     if store.get_bytes(DBColumn::SafeStake,&msg.0).unwrap().is_none() {
-                        let mut key = msg.0.to_vec();
-                        key.extend_from_slice(&validator_public_key.serialize());
                         info!(log, "local wirte signature (old version)"; "signing root" => %hex::encode(msg));
                         let _ = store.put_bytes(
                             DBColumn::SafeStake,
@@ -243,10 +241,10 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
 
     fn check_msg_signed(
         &self,
-        domain_hash: &[u8],
+        signing_root: &[u8],
         validator_public_key: &[u8],
     ) -> Result<(), Status> {
-        let mut key = domain_hash.to_vec();
+        let mut key = signing_root.to_vec();
         key.extend_from_slice(validator_public_key);
         let signature = self
             .store
@@ -260,9 +258,9 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
             error!(
                 self.logger,
                 "can't find signature when checking";
-                "signing root" => hex::encode(domain_hash),
+                "signing root" => hex::encode(signing_root),
             );
-            return Err(Status::internal(format!("failed to find signature for {:?}", hex::encode(domain_hash))));
+            return Err(Status::internal(format!("failed to find signature for {:?}", hex::encode(signing_root))));
         }
         Ok(())
     }
@@ -525,6 +523,12 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
     ) -> Result<Response<EmptyResponse>, Status> {
         let req = request.into_inner();
         let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
+        info!(
+            self.logger,
+            "received broadcast attestation";
+            "domain hash" => %domain_hash,
+            "validator public key" => hex::encode(&req.validator_public_key),
+        );
         self.check_operator_domain_hash_signature(
             &domain_hash,
             &req.domain_hash_signature,
