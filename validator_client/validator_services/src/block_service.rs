@@ -339,13 +339,13 @@ impl<T: SlotClock + 'static, E: EthSpec> BlockService<T, E> {
             UnsignedBlock::Full(block_contents) => {
                 let (block, maybe_blobs) = block_contents.deconstruct();
                 self.validator_store
-                    .sign_block(*validator_pubkey, block, slot)
+                    .sign_block(*validator_pubkey, block, slot, maybe_blobs.clone())
                     .await
                     .map(|b| SignedBlock::Full(PublishBlockRequest::new(Arc::new(b), maybe_blobs)))
             }
             UnsignedBlock::Blinded(block) => self
                 .validator_store
-                .sign_block(*validator_pubkey, block, slot)
+                .sign_block(*validator_pubkey, block, slot, None)
                 .await
                 .map(Arc::new)
                 .map(SignedBlock::Blinded),

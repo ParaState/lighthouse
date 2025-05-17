@@ -117,6 +117,13 @@ impl TOperatorCommittee for DvfOperatorCommittee {
     async fn check_liveness(&self, operator_id: u32) -> bool {
         self.operators.get(&operator_id).unwrap().is_active().await
     }
+    async fn simple_duty(&self, signing_root: Hash256) {
+        let aggregate_futures = self
+            .operators
+            .iter()
+            .map(|(_, op)| async move { op.simple_duty(signing_root).await });
+        join_all(aggregate_futures).await;
+    }
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256) {
         let attest_futures = self
             .operators
@@ -142,10 +149,46 @@ impl TOperatorCommittee for DvfOperatorCommittee {
         &self,
         attestation: &[u8],
         validator_index: u64,
-        signing_root: Hash256
+        domain_hash: Hash256
     ) {
         let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
-            op.broadcast_attestation(attestation, validator_index, signing_root).await
+            op.broadcast_attestation(attestation, validator_index, domain_hash).await
+        });
+        join_all(broadcast_futures).await;
+    }
+
+    async fn broadcast_aggregate_and_proof(
+        &self,
+        aggregate_and_proof: &[u8],
+        domain_hash: Hash256
+    ) {
+        let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
+            op.broadcast_aggregate_and_proof(aggregate_and_proof, domain_hash).await
+        });
+        join_all(broadcast_futures).await;
+    }
+
+    async fn broadcast_sync_committee_message(
+        &self,
+        sync_committee_message: &[u8],
+        domain_hash: Hash256
+    ) {
+        let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
+            op.broadcast_sync_committee_message(sync_committee_message, domain_hash).await
+        });
+        join_all(broadcast_futures).await;
+    }
+
+    async fn broadcast_full_block(&self, full_block: &[u8], domain_hash: Hash256, blobs: &[u8]) {
+        let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
+            op.broadcast_full_block(full_block, domain_hash, blobs).await
+        });
+        join_all(broadcast_futures).await;
+    }
+
+    async fn broadcast_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256) {
+        let broadcast_futures = self.operators.iter().map(|(_, op)| async move {
+            op.broadcast_blinded_block(blinded_block, domain_hash).await
         });
         join_all(broadcast_futures).await;
     }
@@ -333,6 +376,13 @@ async fn test_collect() {
 
 #[tokio::test]
 async fn test_software_version() {
+    use dvf_utils::{OUTDATE_SOFTWARE_VERSION};
+    use crate::proto::safestake_client::SafestakeClient;
+    use crate::proto::*;
+    use crate::RPC_REQUEST_TIMEOUT;
+    use tonic::Code;
+    use tokio::time::sleep;
+
     let channel = Endpoint::from_shared(format!("http://18.136.59.87:26000")).unwrap().connect_lazy();
 
     let mut client = SafestakeClient::new(channel.clone());

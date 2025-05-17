@@ -156,32 +156,79 @@ impl SigningMethod {
         &self,
         attestation: &Attestation<E>,
         validator_index: u64,
-        signing_root: Hash256,
+        domain_hash: Hash256,
     ) {
         match self {
             SigningMethod::DistributedKeystore {
                 operator_committee, ..
             } => {
                 operator_committee
-                    .broadcast_attestation(&serde_json::to_vec(attestation).unwrap(), validator_index, signing_root)
+                    .broadcast_attestation(&serde_json::to_vec(attestation).unwrap(), validator_index, domain_hash)
                     .await;
             }
             _ => {}
         }
     }
 
-    pub async fn broadcast_block<E: EthSpec>(
+    pub async fn broadcast_aggregate_and_proof<E: EthSpec>(
         &self,
-        signed_block: &Attestation<E>,
-        signing_root: Hash256,
+        signed_aggregate: &SignedAggregateAndProof<E>,
+        domain_hash: Hash256,
     ) {
         match self {
             SigningMethod::DistributedKeystore {
                 operator_committee, ..
             } => {
-                // operator_committee
-                //     .broadcast_attestation(&serde_json::to_vec(attestation).unwrap(), validator_index, signing_root)
-                //     .await;
+                operator_committee
+                    .broadcast_aggregate_and_proof(&serde_json::to_vec(signed_aggregate).unwrap(), domain_hash)
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn broadcast_sync_committee_message(
+        &self,
+        sync_committee_message: &SyncCommitteeMessage,
+        domain_hash: Hash256,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore {
+                operator_committee, ..
+            } => {
+                operator_committee
+                    .broadcast_sync_committee_message(&serde_json::to_vec(sync_committee_message).unwrap(), domain_hash)
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn broadcast_block<E: EthSpec, Payload: AbstractExecPayload<E>>(
+        &self,
+        signed_block: &SignedBeaconBlock<E, Payload>,
+        domain_hash: Hash256,
+        maybe_blobs: Option<(KzgProofs<E>, BlobsList<E>)>
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore {
+                operator_committee, ..
+            } => {
+                let data = serde_json::to_vec(signed_block).unwrap();
+                let blobs = serde_json::to_vec(&maybe_blobs).unwrap();
+                let block_type = Payload::block_type();
+                match block_type {
+                    BlockType::Blinded => {
+                        operator_committee
+                            .broadcast_blinded_block(&data, domain_hash, )
+                            .await;
+                    }
+                    BlockType::Full => {
+                        operator_committee
+                            .broadcast_full_block(&data, domain_hash, &blobs)
+                            .await;
+                    }
+                };
             }
             _ => {}
         }
@@ -198,6 +245,22 @@ impl SigningMethod {
             } => {
                 operator_committee
                     .attest(attestation_data, domain_hash)
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn distributed_simple_duty(
+        &self,
+        signing_root: Hash256,
+    ) {
+        match self {
+            SigningMethod::DistributedKeystore {
+                operator_committee, ..
+            } => {
+                operator_committee
+                    .simple_duty(signing_root)
                     .await;
             }
             _ => {}

@@ -23,9 +23,14 @@ pub trait TOperatorCommittee: Send {
     ) -> Result<(Signature, Vec<u64>), DvfError>;
     async fn check_liveness(&self, operator_id: u32) -> bool;
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
+    async fn simple_duty(&self, signing_root: Hash256);
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);
     async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
     async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, domain_hash: Hash256);
+    async fn broadcast_aggregate_and_proof(&self, aggregate_and_proof: &[u8],signing_root: Hash256);
+    async fn broadcast_sync_committee_message(&self, sync_committee_message: &[u8], signing_root: Hash256); 
+    async fn broadcast_full_block(&self, full_block: &[u8], domain_hash: Hash256, blobs: &[u8]);
+    async fn broadcast_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
     fn get_leader_id(&self, nonce: u64) -> u32;
     fn get_backup_id(&self, nonce: u64) -> u32;
 }

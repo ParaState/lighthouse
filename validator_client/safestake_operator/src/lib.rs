@@ -99,10 +99,15 @@ pub trait TOperator: Sync + Send {
     async fn sign(&self, msg: Hash256) -> Result<Signature, DvfError>;
     async fn is_active(&self) -> bool;
     async fn attest(&self, attest_data: &AttestationData, domain_hash: Hash256);
+    async fn simple_duty(&self, signing_root: Hash256);
     async fn propose_full_block(&self, full_block: &[u8], domain_hash: Hash256);
     async fn propose_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256);
-    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, signing_root: Hash256);
+    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, domain_hash: Hash256);
+    async fn broadcast_aggregate_and_proof(&self, aggregate_and_proof: &[u8], domain_hash: Hash256);
+    async fn broadcast_sync_committee_message(&self, _: &[u8], _: Hash256) {}
     fn shared_public_key(&self) -> PublicKey;
+    async fn broadcast_full_block(&self, _: &[u8], _: Hash256, _: &[u8]) {}
+    async fn broadcast_blinded_block(&self, _: &[u8], _: Hash256) {}
 }
 
 pub struct LocalOperator {
@@ -135,6 +140,16 @@ impl TOperator for LocalOperator {
     }
 
     async fn broadcast_attestation(&self, _: &[u8], _: u64, _: Hash256) {}
+
+    async fn broadcast_aggregate_and_proof(&self, _: &[u8], _: Hash256) {}
+    
+    async fn simple_duty(&self, _: Hash256) {}
+
+    async fn broadcast_sync_committee_message(&self, _: &[u8], _: Hash256) {}
+
+    async fn broadcast_full_block(&self, _: &[u8], _: Hash256, _: &[u8]) {}
+
+    async fn broadcast_blinded_block(&self, _: &[u8], _: Hash256) {}
 }
 
 pub struct RemoteOperator {
@@ -282,20 +297,73 @@ impl TOperator for RemoteOperator {
         }
     }
 
-    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, signing_root: Hash256) {
+    async fn broadcast_attestation(&self, attestation: &[u8], validator_index: u64, domain_hash: Hash256) {
         let mut client = SafestakeClient::new(self.channel.clone());
         let sent_data = compress_data(attestation).unwrap();
-        let sig = SecpSignature::new(&Digest::from(&signing_root.0), &self.self_operator_secretkey).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
         let request = tonic::Request::new(BroadcastAttestationRequest {
             version: VERSION,
             operator_id: self.self_operator_id,
-            signing_root: signing_root.0.to_vec(),
-            signing_root_signature: sig.flatten().to_vec(),
+            domain_hash: domain_hash.0.to_vec(),
+            domain_hash_signature: sig.flatten().to_vec(),
             attestation: sent_data,
             validator_index: validator_index,
+            validator_public_key: self.validator_public_key.serialize().to_vec()
         });
         tokio::spawn(async move {
             let _ = client.broadcast_attestation(request).await;
+        });
+    }
+
+    async fn broadcast_aggregate_and_proof(&self, aggregate_and_proof: &[u8], domain_hash: Hash256) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sent_data = compress_data(aggregate_and_proof).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(BroadcastAggregateAndProofRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domain_hash_signature: sig.flatten().to_vec(),
+            aggregate_and_proof: sent_data,
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+        tokio::spawn(async move {
+            let _ = client.broadcast_aggregate_and_proof(request).await;
+        });
+    }
+
+    async fn broadcast_full_block(&self, full_block: &[u8], domain_hash: Hash256, blobs: &[u8]) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sent_data = compress_data(full_block).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(BroadcastFullBlockRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domain_hash_signature: sig.flatten().to_vec(),
+            block_data: sent_data,
+            blobs: compress_data(blobs).unwrap(),
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+        tokio::spawn(async move {
+            let _ = client.broadcast_full_block(request).await;
+        });
+    }
+
+    async fn broadcast_blinded_block(&self, blinded_block: &[u8], domain_hash: Hash256) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sent_data = compress_data(blinded_block).unwrap();
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(BroadcastBlindedBlockRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domain_hash_signature: sig.flatten().to_vec(),
+            block_data: sent_data,
+            validator_public_key: self.validator_public_key.serialize().to_vec()
+        });
+        tokio::spawn(async move {
+            let _ = client.broadcast_blinded_block(request).await;
         });
     }
 
@@ -403,6 +471,64 @@ impl TOperator for RemoteOperator {
     fn shared_public_key(&self) -> PublicKey {
         self.shared_public_key.clone()
     }
+
+    async fn simple_duty(&self, signing_root: Hash256) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sig = SecpSignature::new(&Digest::from(&signing_root.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(SimpleDutyRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            signing_root: signing_root.0.to_vec(),
+            signing_root_signature: sig.flatten().to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec(),
+        });
+
+        tokio::select! {
+            result = client.simple_duty(request) => {
+                match result {
+                    Ok(_) => {
+                        info!(
+                            self.logger,
+                            "remote aggregate";
+                            "signing root" => %signing_root
+                        );
+                    },
+                    Err(e) => {
+                        error!(
+                            self.logger,
+                            "remote aggregate error";
+                            "error" => %e
+                        );
+                    }
+                }
+            },
+            _ = sleep(RPC_REQUEST_TIMEOUT) => {
+                error!(
+                    self.logger,
+                    "remote aggregate timeout";
+                    "operator" => self.operator_id,
+                    "socket address" => self.base_address
+                );
+            }
+        }
+    }
+
+    async fn broadcast_sync_committee_message(&self, sync_committee_message: &[u8], domain_hash: Hash256) {
+        let mut client = SafestakeClient::new(self.channel.clone());
+        let sig = SecpSignature::new(&Digest::from(&domain_hash.0), &self.self_operator_secretkey).unwrap();
+        let request = tonic::Request::new(BroadcastSyncCommitteeMessageRequest {
+            version: VERSION,
+            operator_id: self.self_operator_id,
+            domain_hash: domain_hash.0.to_vec(),
+            domain_hash_signature: sig.flatten().to_vec(),
+            sync_committee_message: sync_committee_message.to_vec(),
+            validator_public_key: self.validator_public_key.serialize().to_vec(),
+        });
+        tokio::spawn(async move {
+            let _ = client.broadcast_sync_committee_message(request).await;
+        });
+    }
+
 }
 
 #[tokio::test]

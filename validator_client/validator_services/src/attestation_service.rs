@@ -627,6 +627,7 @@ impl<T: SlotClock + 'static, E: EthSpec> AttestationService<T, E> {
                 .await
             {
                 Ok(aggregate) => Some(aggregate),
+                Err(ValidatorStoreError::UnableToSign(SigningError::NotLeader)) => None,
                 Err(ValidatorStoreError::UnknownPubkey(pubkey)) => {
                     // A pubkey can be missing when a validator was recently
                     // removed via the API.

@@ -71,15 +71,61 @@ message ProposeBlindedBlockResponse {
 message BroadcastAttestationRequest {
     uint64 version = 1;
     uint32 operator_id = 2;
-    bytes signing_root = 3;
-    bytes signing_root_signature = 4;
+    bytes domain_hash = 3;
+    bytes domain_hash_signature = 4;
     bytes attestation = 5;
     uint64 validator_index = 6;
+    bytes validator_public_key = 7;
 }
 
-message BroadcastAttestationResponse {
-    string msg = 1;
+message EmptyResponse {
 }
+
+message BroadcastAggregateAndProofRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domain_hash_signature = 4;
+    bytes aggregate_and_proof = 5;
+    bytes validator_public_key = 6;
+}
+
+message BroadcastSyncCommitteeMessageRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domain_hash_signature = 4;
+    bytes sync_committee_message = 5;
+    bytes validator_public_key = 6;
+}
+
+message BroadcastBlindedBlockRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domain_hash_signature = 4;
+    bytes block_data = 5;
+    bytes validator_public_key = 6;
+}
+
+message BroadcastFullBlockRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes domain_hash = 3;
+    bytes domain_hash_signature = 4;
+    bytes block_data = 5;
+    bytes blobs = 6;
+    bytes validator_public_key = 7;
+}
+
+message SimpleDutyRequest {
+    uint64 version = 1;
+    uint32 operator_id = 2;
+    bytes signing_root = 3;
+    bytes signing_root_signature = 4;
+    bytes validator_public_key = 5;
+}
+
 
 // Inference is the inference service.
 service Safestake {
@@ -89,6 +135,11 @@ service Safestake {
     rpc ProposeFullBlock(ProposeFullBlockRequest) returns (ProposeFullBlockResponse) {}
     rpc ProposeBlindedBlock(ProposeBlindedBlockRequest) returns (ProposeBlindedBlockResponse) {}
     rpc GetSoftwareVersion(GetSoftwareVersionRequest) returns (GetSoftwareVersionResponse) {}
-    rpc BroadcastAttestation(BroadcastAttestationRequest) returns (BroadcastAttestationResponse) {}
+    rpc BroadcastAttestation(BroadcastAttestationRequest) returns (EmptyResponse) {}
+    rpc SimpleDuty(SimpleDutyRequest) returns (EmptyResponse) {}
+    rpc BroadcastAggregateAndProof(BroadcastAggregateAndProofRequest) returns (EmptyResponse) {}
+    rpc BroadcastSyncCommitteeMessage(BroadcastSyncCommitteeMessageRequest) returns (EmptyResponse) {}
+    rpc BroadcastFullBlock(BroadcastFullBlockRequest) returns (EmptyResponse) {}
+    rpc BroadcastBlindedBlock(BroadcastBlindedBlockRequest) returns (EmptyResponse) {}
 }  
 

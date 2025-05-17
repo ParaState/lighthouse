@@ -5,20 +5,11 @@ use safestake_crypto::secp::{Digest, Signature};
 use safestake_database::SafeStakeDatabase;
 use safestake_operator::proto::safestake_server::Safestake;
 use safestake_operator::proto::safestake_server::SafestakeServer;
-use safestake_operator::proto::GetSoftwareVersionRequest;
-use safestake_operator::proto::GetSoftwareVersionResponse;
-use safestake_operator::proto::{
-    AttestRequest, AttestResponse, CheckLivenessRequest, CheckLivenessResponse,
-    GetSignatureRequest, GetSignatureResponse, ProposeBlindedBlockRequest,
-    ProposeBlindedBlockResponse, ProposeFullBlockRequest, ProposeFullBlockResponse,
-    BroadcastAttestationRequest, BroadcastAttestationResponse,
-};
-use signing_method::SignableMessage;
+use safestake_operator::proto::*;
 use slashing_protection::{NotSafe, Safe, SlashingDatabase};
-use slog::{error, info, Logger};
+use slog::{error, info, Logger, warn};
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
-use types::ChainSpec;
 use std::sync::Arc;
 use store::{database::leveldb_impl::LevelDB, DBColumn};
 use task_executor::TaskExecutor;
@@ -27,7 +18,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use types::{
     AbstractExecPayload, AttestationData, BeaconBlock, BlindedPayload, EthSpec, ExecPayload,
-    FullPayload, Hash256, Attestation,
+    FullPayload, Hash256, Attestation, SignedAggregateAndProof, SyncCommitteeMessage, ChainSpec, SignedBeaconBlock, SignedRoot, Slot, KzgProofs, BlobsList
 };
 use types::{PublicKey, Signature as BlsSignature};
 use parking_lot::RwLock;
@@ -42,6 +33,7 @@ use safestake_operator::CHANNEL_SIZE;
 use beacon_node_fallback::{ApiTopic, BeaconNodeFallback};
 use slot_clock::SlotClock;
 use either::Either;
+use eth2::types::PublishBlockRequest;
 pub struct SafestakeService<T: SlotClock + 'static, E: EthSpec> {
     logger: Logger,
     store: Arc<LevelDB<E>>,
@@ -137,17 +129,6 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                 e
             ))
         })?;
-        // if self.validator_client.get_lighthouse_validators_pubkey(&validator_public_key.compress()).await.map_err(|_| {
-        //     Status::internal(format!(
-        //         "validator is not enabled on this operator {}",
-        //         &validator_public_key
-        //     ))
-        // })?.is_none() {
-        //     return Err(Status::internal(format!(
-        //         "validator is not enabled on this operator {}",
-        //         &validator_public_key
-        //     )));
-        // }
         if !self.validator_keys.read().contains_key(&validator_public_key) {
             return Err(Status::internal(format!(
                 "validator is not enabled on this operator {}",
@@ -217,8 +198,7 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                 domain_hash,
             ) {
                 Ok(Safe::Valid) => {
-                    let signable_msg = SignableMessage::BeaconBlock(&block);
-                    let signing_root = signable_msg.signing_root(domain_hash);
+                    let signing_root = block.signing_root(domain_hash);
                     info!(
                         self.logger,
                         "safestake operator sign block";
@@ -230,13 +210,22 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                     self.store
                         .put_bytes(
                             DBColumn::SafeStake,
-                            // &validator_public_key.as_hex_string(),
                             &signing_root.0,
                             &serialized_signature,
                         )
                         .map_err(|e| {
                             Status::internal(format!("failed to save signature {:?}", e))
                         })?;
+
+                    let mut key = signing_root.0.to_vec();
+                    key.extend_from_slice(&validator_public_key.serialize());
+                    self.store
+                        .put_bytes(
+                            DBColumn::SafeStake,
+                            &key,
+                            &serialized_signature,
+                        )
+                        .map_err(|e| Status::internal(format!("failed to save signature {:?}", e)))?;
                     format!("successfully consensus block on {}", &signing_root)
                 }
                 Ok(Safe::SameData) => {
@@ -251,6 +240,32 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
             },
         )
     }
+
+    fn check_msg_signed(
+        &self,
+        domain_hash: &[u8],
+        validator_public_key: &[u8],
+    ) -> Result<(), Status> {
+        let mut key = domain_hash.to_vec();
+        key.extend_from_slice(validator_public_key);
+        let signature = self
+            .store
+            .get_bytes(
+                DBColumn::SafeStake,
+                &key)
+            .map_err(|e| {
+                Status::internal(format!("failed to read signature {:?}", e))
+            })?;
+        if signature.is_none() {
+            error!(
+                self.logger,
+                "can't find signature when checking"
+            );
+            return Err(Status::internal(format!("failed to find signature for {:?}", hex::encode(domain_hash))));
+        }
+        Ok(())
+    }
+
 }
 
 #[tonic::async_trait]
@@ -347,20 +362,27 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             domain_hash,
         ) {
             Ok(Safe::Valid) => {
-                let signable_msg =
-                    SignableMessage::<E, BlindedPayload<E>>::AttestationData(&attestation_data);
-                let signing_root = signable_msg.signing_root(domain_hash);
+                let signing_root = attestation_data.signing_root(domain_hash);
                 info!(self.logger, "opeartor service attestation"; "signing root" => %signing_root);
                 let sig = self.sign_msg(&validator_public_key, signing_root).await?;
                 let serialized_signature = sig.serialize();
                 self.store
                     .put_bytes(
-                        // &format!("0x{}", hex::encode(req.validator_public_key)),
                         DBColumn::SafeStake,
                         &signing_root.0,
                         &serialized_signature,
                     )
                     .map_err(|e| Status::internal(format!("failed to save signature {:?}", e)))?;
+                let mut key = signing_root.0.to_vec();
+                key.extend_from_slice(&req.validator_public_key);
+                self.store
+                    .put_bytes(
+                        DBColumn::SafeStake,
+                        &key,
+                        &serialized_signature,
+                    )
+                    .map_err(|e| Status::internal(format!("failed to save signature {:?}", e)))?;
+
                 format!("successfully consensus attestation on {}", &signing_root)
             }
             Ok(Safe::SameData) => {
@@ -499,35 +521,15 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
     async fn broadcast_attestation(
         &self,
         request: Request<BroadcastAttestationRequest>,
-    ) -> Result<Response<BroadcastAttestationResponse>, Status> {
+    ) -> Result<Response<EmptyResponse>, Status> {
         let req = request.into_inner();
-        let signing_root = Hash256::from(&req.signing_root.try_into().unwrap());
+        let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
         self.check_operator_domain_hash_signature(
-            &signing_root,
-            &req.signing_root_signature,
+            &domain_hash,
+            &req.domain_hash_signature,
             req.operator_id,
         )?;
-
-        let signature = self
-            .store
-            .get_bytes(
-                DBColumn::SafeStake,
-                // &format!("0x{}", hex::encode(&req.validator_public_key)), 
-                signing_root.as_slice())
-            .map_err(|e| {
-                Status::internal(format!("failed to read signature {:?}", e))
-            })?;
-        if signature.is_none() {
-            error!(self.logger, "failed to find message's signature"; "signing root" => %signing_root);
-            return Err(Status::internal(format!(
-                "failed to find message's signature"
-            )));
-        }
-        info!(
-            self.logger,
-            "received broadcast attestation";
-            "validator index" => req.validator_index,
-        );
+        
         let attestation_bytes = safestake_operator::decompress_data(&req.attestation).unwrap();
         let attestation: Attestation<E> = match serde_json::from_slice(&attestation_bytes) {
             Ok(a) => a,
@@ -539,6 +541,13 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             }
         };
 
+        let signing_root = attestation.data().signing_root(domain_hash);
+        self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
+        info!(
+            self.logger,
+            "received broadcast attestation";
+            "validator public key" => hex::encode(&req.validator_public_key),
+        );
         // lighthouse/validator_client/validator_services/src/attestation_service.rs:468
         let log = self.logger.clone();
         let slot = attestation.data().slot;
@@ -592,11 +601,324 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
                 "type" => "unaggregated",
             ),
         }
-
-
-
-        Ok(Response::new(BroadcastAttestationResponse { msg: String::new() }))
+        Ok(Response::new(EmptyResponse { }))
     }
+
+    async fn broadcast_aggregate_and_proof(
+        &self,
+        request: Request<BroadcastAggregateAndProofRequest>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let req = request.into_inner();
+        let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &domain_hash,
+            &req.domain_hash_signature,
+            req.operator_id,
+        )?;
+        let aggregate_data = safestake_operator::decompress_data(&req.aggregate_and_proof).unwrap();
+        let aggregate_and_proof: SignedAggregateAndProof<E> = match serde_json::from_slice(&aggregate_data) {
+            Ok(a) => a,
+            Err(e) => {
+                error!(self.logger, "deserialize aggregate and proof"; "error" => %e);
+                return Err(Status::internal(format!(
+                    "failed to deserialize aggregate and proof data"
+                )));
+            }
+        };
+        let signing_root = aggregate_and_proof.message().signing_root(domain_hash);
+        
+        self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
+        info!(
+            self.logger,
+            "received broadcast aggregate and proof";
+            "validator public key" => hex::encode(req.validator_public_key),
+        );
+
+        let fork_name = self.spec.fork_name_at_slot::<E>(aggregate_and_proof.message().aggregate().data().slot);
+        let log = self.logger.clone();
+        match self.beacon_nodes.first_success(|beacon_node| {
+            let aggregate_and_proof = aggregate_and_proof.clone();
+            async move {
+                if fork_name.electra_enabled() {
+                    beacon_node
+                        .post_validator_aggregate_and_proof_v2(
+                            &vec![aggregate_and_proof],
+                            fork_name,
+                        )
+                        .await
+                } else {
+                    beacon_node
+                        .post_validator_aggregate_and_proof_v1(
+                            &vec![aggregate_and_proof],
+                        )
+                        .await
+                }
+            }
+        }).await
+        {
+            Ok(()) => {
+                let attestation = aggregate_and_proof.message().aggregate();
+                info!(
+                    log,
+                    "Successfully published attestation by leader";
+                    "aggregator" => aggregate_and_proof.message().aggregator_index(),
+                    "signatures" => attestation.num_set_aggregation_bits(),
+                    "head_block" => format!("{:?}", attestation.data().beacon_block_root),
+                    "committee_index" => attestation.committee_index(),
+                    "slot" => attestation.data().slot.as_u64(),
+                    "type" => "aggregated",
+                );
+                
+            }
+            Err(e) => {
+                let attestation = &aggregate_and_proof.message().aggregate();
+                warn!(
+                    log,
+                    "Failed to publish attestation by leader";
+                    "error" => %e,
+                    "aggregator" => aggregate_and_proof.message().aggregator_index(),
+                    "committee_index" => attestation.committee_index(),
+                    "slot" => attestation.data().slot.as_u64(),
+                    "type" => "aggregated",
+                );
+                
+            }
+        }
+        Ok(Response::new(EmptyResponse { }))
+    }
+
+    async fn simple_duty(
+        &self,
+        request: Request<SimpleDutyRequest>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let req = request.into_inner();
+        let validator_public_key = self
+            .check_version_and_validator_public_key(req.version, &req.validator_public_key)
+            .await?;
+        let signing_root = Hash256::from(&req.signing_root.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &signing_root,
+            &req.signing_root_signature,
+            req.operator_id,
+        )?;
+
+        let sig = self.sign_msg(&validator_public_key, signing_root).await?;
+        let serialized_signature = sig.serialize();
+        let mut key = signing_root.0.to_vec();
+        key.extend_from_slice(&req.validator_public_key);
+        self.store
+            .put_bytes(
+                DBColumn::SafeStake,
+                &key,
+                &serialized_signature,
+            )
+            .map_err(|e| Status::internal(format!("failed to save signature {:?}", e)))?;
+        Ok(Response::new(EmptyResponse {}))
+    }
+
+    async fn broadcast_sync_committee_message(
+        &self,
+        request: Request<BroadcastSyncCommitteeMessageRequest>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let req = request.into_inner();
+        let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &domain_hash,
+            &req.domain_hash_signature,
+            req.operator_id,
+        )?;
+        
+        let sync_committee_message_bytes = safestake_operator::decompress_data(&req.sync_committee_message).unwrap();
+        let sync_committee_message: SyncCommitteeMessage = match serde_json::from_slice(&sync_committee_message_bytes) {
+            Ok(a) => a,
+            Err(e) => {
+                error!(self.logger, "deserialize sync committee message"; "error" => %e);
+                return Err(Status::internal(format!(
+                    "failed to deserialize sync committee message data"
+                )));
+            }
+        };
+
+        let signing_root = sync_committee_message.beacon_block_root.signing_root(domain_hash);
+        self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
+        info!(
+            self.logger,
+            "received broadcast sync committee message";
+            "validator public key" => hex::encode(req.validator_public_key),
+        );
+
+        // lighthouse/validator_client/validator_services/src/sync_committee_service.rs:303
+        let log = self.logger.clone();
+        let slot = sync_committee_message.slot;
+        let beacon_block_root = sync_committee_message.beacon_block_root;
+        self.beacon_nodes
+            .request(ApiTopic::SyncCommittee, |beacon_node| {
+                let sync_committee_message = sync_committee_message.clone();
+                async move {
+                    beacon_node
+                        .post_beacon_pool_sync_committee_signatures(&vec![sync_committee_message])
+                        .await
+                }})
+                .await
+                .map_err(|e| {
+                    error!(
+                        log,
+                        "Unable to publish sync committee messages by leader";
+                        "slot" => slot,
+                        "error" => %e,
+                    );
+                    Status::internal(format!(
+                        "Unable to publish sync committee messages by leader"
+                    ))
+                })?;
+        info!(
+            log,
+            "Successfully published sync committee messages by leader";
+            "head_block" => ?beacon_block_root,
+            "slot" => slot,
+        );
+        Ok(Response::new(EmptyResponse { }))
+    }
+
+    async fn broadcast_full_block(
+        &self,
+        request: Request<BroadcastFullBlockRequest>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let req = request.into_inner();
+        let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &domain_hash,
+            &req.domain_hash_signature,
+            req.operator_id,
+        )?;
+
+        let block_bytes = safestake_operator::decompress_data(&req.block_data).unwrap();
+        let signed_block: SignedBeaconBlock<E, FullPayload<E>> =
+        match serde_json::from_slice(&block_bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(self.logger, "deserialize full block"; "error" => %e);
+                return Err(Status::internal(format!(
+                    "failed to deserialize propose full block data"
+                )));
+            }
+        };
+        let signing_root = signed_block.message().signing_root(domain_hash);
+        let slot = signed_block.slot();
+        self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
+        info!(
+            self.logger,
+            "received broadcast full block";
+            "slot" => slot.as_u64(),
+            "validator public key" => hex::encode(&req.validator_public_key),
+        );
+        self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
+            let log = self.logger.clone();
+            let signed_block = signed_block.clone();
+            let blobs = req.blobs.clone();
+            async move {
+                let blobs_bytes = safestake_operator::decompress_data(&blobs).unwrap();
+                let maybe_blobs: Option<(KzgProofs<E>, BlobsList<E>)> = serde_json::from_slice(&blobs_bytes).unwrap();
+                let request = PublishBlockRequest::new(Arc::new(signed_block), maybe_blobs);
+                beacon_node
+                    .post_beacon_blocks_v2_ssz(&request, None)
+                    .await
+                    .or_else(|e| handle_block_post_error(e, slot, &log))
+            }   
+        }).await.map_err(|_| {
+            Status::internal(format!(
+                "Unable to publish block by leader"
+            ))
+        })?;
+        info!(
+            self.logger,
+            "Successfully published full block by leader";
+            "validator public key" => hex::encode(&req.validator_public_key),
+            "slot" => signed_block.slot().as_u64(),
+        );
+        Ok(Response::new(EmptyResponse { }))
+    }
+
+    async fn broadcast_blinded_block(
+        &self,
+        request: Request<BroadcastBlindedBlockRequest>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let req = request.into_inner();
+        let domain_hash = Hash256::from(&req.domain_hash.try_into().unwrap());
+        self.check_operator_domain_hash_signature(
+            &domain_hash,
+            &req.domain_hash_signature,
+            req.operator_id,
+        )?;
+
+        let block_bytes = safestake_operator::decompress_data(&req.block_data).unwrap();
+        let signed_block: SignedBeaconBlock<E, BlindedPayload<E>> =
+        match serde_json::from_slice(&block_bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                error!(self.logger, "deserialize full block"; "error" => %e);
+                return Err(Status::internal(format!(
+                    "failed to deserialize propose full block data"
+                )));
+            }
+        };
+        let signing_root = signed_block.message().signing_root(domain_hash);
+        let slot = signed_block.slot();
+        self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
+        info!(
+            self.logger,
+            "received broadcast blinded block";
+            "slot" => slot.as_u64(),
+            "validator public key" => hex::encode(&req.validator_public_key),
+        );
+        self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
+            let log = self.logger.clone();
+            let signed_block = signed_block.clone();
+            async move {
+                beacon_node
+                    .post_beacon_blinded_blocks_v2_ssz(&signed_block, None)
+                    .await
+                    .or_else(|e| handle_block_post_error(e, slot, &log))
+            }   
+        }).await.map_err(|_| {
+            Status::internal(format!(
+                "Unable to publish block by leader"
+            ))
+        })?;
+        info!(
+            self.logger,
+            "Successfully published blinded block by leader";
+            "validator public key" => hex::encode(&req.validator_public_key),
+            "slot" => signed_block.slot().as_u64(),
+        );
+        Ok(Response::new(EmptyResponse { }))
+    }
+}
+
+fn handle_block_post_error(err: eth2::Error, slot: Slot, log: &Logger) -> Result<(), Status> {
+    // Handle non-200 success codes.
+    if let Some(status) = err.status() {
+        if status == eth2::StatusCode::ACCEPTED {
+            info!(
+                log,
+                "Block is already known to BN or might be invalid";
+                "slot" => slot,
+                "status_code" => status.as_u16(),
+            );
+            return Ok(());
+        } else if status.is_success() {
+            warn!(
+                log,
+                "Block published with non-standard success code";
+                "slot" => slot,
+                "status_code" => status.as_u16(),
+            );
+            return Ok(());
+        }
+    }
+    Err(Status::internal(format!(
+        "Error from beacon node when publishing block: {err:?}",
+    )))
 }
 
 #[tokio::test]

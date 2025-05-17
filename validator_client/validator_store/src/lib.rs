@@ -20,10 +20,8 @@ use types::{
     SignedAggregateAndProof, SignedBeaconBlock, SignedContributionAndProof, SignedRoot,
     SignedValidatorRegistrationData, SignedVoluntaryExit, Slot, SyncAggregatorSelectionData,
     SyncCommitteeContribution, SyncCommitteeMessage, SyncSelectionProof, SyncSubnetId,
-    ValidatorRegistrationData, VoluntaryExit,
+    ValidatorRegistrationData, VoluntaryExit, PublicKey, KzgProofs, BlobsList,
 };
-
-use types::PublicKey;
 
 use safestake_operator::SafeStakeGraffiti;
 
@@ -618,6 +616,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         validator_pubkey: PublicKeyBytes,
         block: BeaconBlock<E, Payload>,
         current_slot: Slot,
+        maybe_blobs: Option<(KzgProofs<E>, BlobsList<E>)>,
     ) -> Result<SignedBeaconBlock<E, Payload>, Error> {
         // Make sure the block slot is not higher than the current slot to avoid potential attacks.
         if block.slot() > current_slot {
@@ -665,7 +664,6 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         &[validator_metrics::SUCCESS],
                     );
                     let signable_message = SignableMessage::BeaconBlock(&block);
-                    let signing_root = signable_message.signing_root(domain_hash);
                     let signature = signing_method
                         .get_signature::<E, Payload>(
                             signable_message,
@@ -676,11 +674,12 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         .await?;
                     let signed_block = SignedBeaconBlock::from_block(block, signature);
                     
-                    // broadcast the attestation to other operators
-                    // signing_method.broadcast_attestation(
-                    //     &signed_block,
-                    //     signing_root
-                    // ).await;
+                    // broadcast the block to other operators
+                    signing_method.broadcast_block(
+                        &signed_block,
+                        domain_hash,
+                        maybe_blobs
+                    ).await;
                     Ok(signed_block)
                 }
                 Ok(Safe::SameData) => {
@@ -769,7 +768,6 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                         attestation.data()
                     ).await;
                     let signable_msg = SignableMessage::AttestationData(attestation.data());
-                    let signing_root = signable_msg.signing_root(domain_hash);
                     let signature = signing_method
                         .get_signature::<E, BlindedPayload<E>>(
                             signable_msg,
@@ -786,7 +784,7 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
                     signing_method.broadcast_attestation(
                         &attestation,
                         validator_index,
-                        signing_root
+                        domain_hash
                     ).await;
 
                     validator_metrics::inc_counter_vec(
@@ -916,23 +914,36 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
             AggregateAndProof::from_attestation(aggregator_index, aggregate, selection_proof);
 
         let signing_method = self.doppelganger_checked_signing_method(validator_pubkey)?;
-        let signature = signing_method
-            .get_signature::<E, BlindedPayload<E>>(
-                SignableMessage::SignedAggregateAndProof(message.to_ref()),
+        
+        if signing_method.responsible(signing_epoch).await {
+            let domain_hash = signing_context.domain_hash(&self.spec);
+            let signable_msg = SignableMessage::SignedAggregateAndProof(message.to_ref());
+            let signing_root = signable_msg.signing_root(domain_hash);
+            signing_method.distributed_simple_duty(signing_root).await;
+            let signature = signing_method.get_signature::<E, BlindedPayload<E>>(
+                signable_msg,
                 signing_context,
                 &self.spec,
                 &self.task_executor,
-            )
-            .await?;
+            ).await?;
 
-        validator_metrics::inc_counter_vec(
-            &validator_metrics::SIGNED_AGGREGATES_TOTAL,
-            &[validator_metrics::SUCCESS],
-        );
+            let signed_aggregate_and_proof =
+                SignedAggregateAndProof::from_aggregate_and_proof(message, signature);
 
-        Ok(SignedAggregateAndProof::from_aggregate_and_proof(
-            message, signature,
-        ))
+            // broadcast the aggregate to other operators
+            signing_method.broadcast_aggregate_and_proof(
+                &signed_aggregate_and_proof,
+                domain_hash,
+            ).await;
+
+            validator_metrics::inc_counter_vec(
+                &validator_metrics::SIGNED_AGGREGATES_TOTAL,
+                &[validator_metrics::SUCCESS],
+            );
+            Ok(signed_aggregate_and_proof)
+        } else {
+            Err(Error::UnableToSign(SigningError::NotLeader))
+        }
     }
 
     /// Produces a `SelectionProof` for the `slot`, signed by with corresponding secret key to
@@ -1022,30 +1033,45 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore<T, E> {
         // Bypass `with_validator_signing_method`: sync committee messages are not slashable.
         let signing_method = self.doppelganger_bypassed_signing_method(*validator_pubkey)?;
 
-        let signature = signing_method
+        if signing_method.responsible(signing_epoch).await {
+            let domain_hash = signing_context.domain_hash(&self.spec);
+            let signable_msg = SignableMessage::SyncCommitteeSignature {
+                beacon_block_root,
+                slot,
+            };
+            let signing_root = signable_msg.signing_root(domain_hash);
+            signing_method.distributed_simple_duty(signing_root).await;
+            let signature = signing_method
             .get_signature::<E, BlindedPayload<E>>(
-                SignableMessage::SyncCommitteeSignature {
-                    beacon_block_root,
-                    slot,
-                },
+                signable_msg,
                 signing_context,
                 &self.spec,
                 &self.task_executor,
             )
             .await
             .map_err(Error::UnableToSign)?;
+            let sync_committee_message = SyncCommitteeMessage {
+                slot,
+                beacon_block_root,
+                validator_index,
+                signature,
+            };
+            // broadcast the sync committee to other operators
 
-        validator_metrics::inc_counter_vec(
-            &validator_metrics::SIGNED_SYNC_COMMITTEE_MESSAGES_TOTAL,
-            &[validator_metrics::SUCCESS],
-        );
+            signing_method.broadcast_sync_committee_message(
+                &sync_committee_message,
+                domain_hash
+            ).await;
 
-        Ok(SyncCommitteeMessage {
-            slot,
-            beacon_block_root,
-            validator_index,
-            signature,
-        })
+            validator_metrics::inc_counter_vec(
+                &validator_metrics::SIGNED_SYNC_COMMITTEE_MESSAGES_TOTAL,
+                &[validator_metrics::SUCCESS],
+            );
+    
+            Ok(sync_committee_message)
+        } else {
+            Err(Error::UnableToSign(SigningError::NotLeader))
+        }
     }
 
     pub async fn produce_signed_contribution_and_proof(
