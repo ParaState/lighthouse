@@ -464,7 +464,7 @@ impl ContractService {
             config.network_contract.parse::<Address>().unwrap(),
             provider.clone(),
         );
-        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 3));
+        let mut query_interval = tokio::time::interval(Duration::from_secs(60 * 10));
         let api_secret = ApiSecret::create_or_open(&config.validator_dir.join("api-token.txt")).unwrap();
         let url = SensitiveUrl::parse(&format!("http://127.0.0.1:{}", config.http_api_port)).unwrap();
         let api_pubkey = api_secret.api_token();

@@ -150,7 +150,7 @@ impl ConnectionManager {
     /// Connect from `party` to a peer with `peer_address`.
     /// The `party` id is sent to the peer right after connection to identify itself.
     pub async fn connect(party: u64, peer: u64, peer_address: SocketAddr, logger: &Logger) -> Option<NetIOChannel> {
-        let mut delay = 200;
+        let mut delay = 1000;
         let mut retry = 0;
         loop {
             if retry >= 10 {
@@ -170,7 +170,7 @@ impl ConnectionManager {
                     sleep(Duration::from_millis(delay)).await;
 
                     // Wait an increasing delay before attempting to reconnect.
-                    delay = min(2 * delay, 60_000);
+                    delay = min(2 * delay, 60_000 * 10);
                     retry += 1;
                 }
             }
