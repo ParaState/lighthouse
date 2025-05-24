@@ -1018,7 +1018,6 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 &signer,
                 withdrawAddress,
                 32_000_000_000,
-                &config.beacon_nodes,
                 spec,
             )
             .await?;
@@ -1277,7 +1276,6 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
     signer: &SimpleDistributedSigner<T, U>,
     withdraw_address: Address,
     amount: u64,
-    beacon_nodes_urls: &Vec<SensitiveUrl>,
     spec: &Arc<ChainSpec>
 ) -> Result<(DepositData, [u8; 4]), String> {
     let withdrawal_credentials = convert_address_to_withdraw_crendentials(withdraw_address);
@@ -1287,16 +1285,6 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
         amount: amount,
         signature: Signature::empty().into(),
     };
-    // query genesis fork version from beacon node
-    let client = get_valid_beacon_node_http_client(beacon_nodes_urls, spec).await?;
-    let genesis_data = client
-        .get_beacon_genesis()
-        .await
-        .map_err(|e| {
-            format!("failed to get beacon genesis data {:?}", e)
-        })?
-        .data;
-    // spec.genesis_fork_version = [00, 00, 16, 32];    //this value is for goerli testnet
     let domain = spec.get_deposit_domain();
     let msg = deposit_data.as_deposit_message().signing_root(domain);
 
@@ -1305,7 +1293,7 @@ pub async fn get_distributed_deposit<T: IOCommittee<U>, U: IOChannel, E: EthSpec
     })?;
     deposit_data.signature = SignatureBytes::from(sig);
 
-    Ok((deposit_data, genesis_data.genesis_fork_version.clone()))
+    Ok((deposit_data, spec.genesis_fork_version.clone()))
 }
 
 
