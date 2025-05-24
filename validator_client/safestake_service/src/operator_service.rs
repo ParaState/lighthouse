@@ -94,7 +94,6 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                     );
                     // Compatible with old versions, need to be deleted later
                     if store.get_bytes(DBColumn::SafeStake,&msg.0).unwrap().is_none() {
-                        info!(log, "local wirte signature (old version)"; "signing root" => %hex::encode(msg));
                         let _ = store.put_bytes(
                             DBColumn::SafeStake,
                             // &validator_public_key.as_hex_string(),

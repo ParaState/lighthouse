@@ -218,11 +218,6 @@ impl TOperator for RemoteOperator {
                     match result {
                         Ok(response) => return Ok(Signature::deserialize(&response.into_inner().signature).unwrap()),
                         Err(_) => {
-                            warn!(
-                                self.logger,
-                                "failed to get remote operator's signature";
-                                "retry" => i
-                            );
                             sleep(Duration::from_millis(200)).await;
                         },
                     }
@@ -527,14 +522,14 @@ impl TOperator for RemoteOperator {
                     Ok(_) => {
                         info!(
                             self.logger,
-                            "remote aggregate";
+                            "simple duty";
                             "signing root" => %signing_root
                         );
                     },
                     Err(e) => {
                         error!(
                             self.logger,
-                            "remote aggregate error";
+                            "simple duty error";
                             "error" => %e
                         );
                     }
@@ -543,7 +538,7 @@ impl TOperator for RemoteOperator {
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
                     self.logger,
-                    "remote aggregate timeout";
+                    "simple duty timeout";
                     "operator" => self.operator_id,
                     "socket address" => self.base_address
                 );
