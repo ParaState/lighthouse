@@ -995,7 +995,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
                         }
                     }
                 },
-                _ = sleep(Duration::from_secs(3 * 60)) => {
+                _ = sleep(Duration::from_secs(511)) => {
                     error!(
                         logger,
                         "[DKG]: secure io committee timeout";

@@ -153,7 +153,7 @@ impl ConnectionManager {
         let mut delay = 1000;
         let mut retry = 0;
         loop {
-            if retry >= 10 {
+            if retry >= 9 {
                 return None;
             }
             match TcpStream::connect(peer_address).await {
