@@ -207,7 +207,7 @@ impl TOperator for RemoteOperator {
             }
         }
 
-        for i in 0..3 {
+        for _ in 0..3 {
             let request = tonic::Request::new(GetSignatureRequest {
                 version: VERSION,
                 msg: msg.0.to_vec(),

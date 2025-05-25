@@ -952,16 +952,58 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 }
             }
         }
+        
+        let tx_hash = log.transaction_hash.unwrap().as_slice().to_vec();
+
+        
+
+
 
         let io = Arc::new(
-            SecureNetIOCommittee::new(
-                config.operator_id as u64,
-                config.base_port + DKG_PORT_OFFSET,
-                &op_ids,
-                &socket_addresses,
-                logger.clone()
-            )
-            .await?,
+            // SecureNetIOCommittee::new(
+            //     config.operator_id as u64,
+            //     config.base_port + DKG_PORT_OFFSET,
+            //     &op_ids,
+            //     &socket_addresses,
+            //     logger.clone()
+            // )
+            // .await?,
+            tokio::select! {
+                result = SecureNetIOCommittee::new(
+                    config.operator_id as u64,
+                    config.base_port + DKG_PORT_OFFSET,
+                    &op_ids,
+                    &socket_addresses,
+                    logger.clone()
+                ) => {
+                    match result {
+                        Ok(committee) => {
+                            info!(
+                                logger,
+                                "[DKG]: created secure io committee";
+                                "tx_hash" => %hex::encode(tx_hash)
+                            );
+                            committee
+                        },
+                        Err(e) => {
+                            error!(
+                                logger,
+                                "[DKG]: failed to create secure io committee";
+                                "tx_hash" => %hex::encode(tx_hash),
+                            );
+                            return Err(format!("failed to create secure io committee due to error :{}", e.to_string()));
+                        }
+                    }
+                },
+                _ = sleep(Duration::from_secs(3 * 60)) => {
+                    error!(
+                        logger,
+                        "[DKG]: secure io committee timeout";
+                        "tx_hash" => %hex::encode(tx_hash),
+                    );
+                    return Err(format!("failed to create secure io committee due to timeout"));
+                }
+            }
         );
 
         let count: u64 = validatorCount.try_into().unwrap();
