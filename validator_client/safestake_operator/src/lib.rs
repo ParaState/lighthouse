@@ -56,7 +56,7 @@ pub fn decompress_data(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
 
 pub static NODE_SECRET: OnceCell<SecpSecretKey> = OnceCell::const_new();
 pub static SAFESTAKE_API: OnceCell<String> = OnceCell::const_new();
-pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(1500);
+pub static RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(800);
 #[derive(Clone, Debug, PartialEq)]
 pub enum DvfError {
     SignatureNotFound(String),
