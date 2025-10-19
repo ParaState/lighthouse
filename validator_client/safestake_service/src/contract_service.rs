@@ -24,7 +24,7 @@ use safestake_crypto::io_committee::{SecureNetIOCommittee, IOCommittee, IOChanne
 use safestake_crypto::dkg::{DKGMalicious, DKGTrait, SimpleDistributedSigner};
 use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
-use slog::{error, info, warn, Logger};
+use tracing::{error, info, warn};
 use slot_clock::SlotClock;
 use secp256k1::PublicKey as Secp256k1PublicKey;
 use std::fs::{remove_dir_all, remove_file, File};
@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use validator_dir::insecure_keys::{insecure_kdf, INSECURE_PASSWORD};
 use validator_dir::ShareBuilder;
 use validator_http_api::ApiSecret;
-use validator_store::ValidatorStore;
+use lighthouse_validator_store::LighthouseValidatorStore;
 use bls::{Hash256, PublicKeyBytes, Signature, SignatureBytes};
 use parking_lot::RwLock;
 use crate::{get_valid_beacon_node_http_client, convert_address_to_withdraw_crendentials, get_validator_index_for_exit};
@@ -333,9 +333,8 @@ impl ContractService {
     }
 
     pub async fn spawn_pull_logs<T: SlotClock + 'static, E: EthSpec>(
-        logger: Logger,
         config: Config,
-        validator_store: Arc<ValidatorStore<T, E>>,
+        validator_store: Arc<LighthouseValidatorStore<T, E>>,
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
@@ -357,9 +356,8 @@ impl ContractService {
             }
         };
         info!(
-            logger,
-            "pull event logs";
-            "record block" => record.block_num
+            info="pull event logs",
+            record_block=record.block_num
         );
         let registry_address = config.registry_contract.parse::<Address>().unwrap();
         let network_address = config.network_contract.parse::<Address>().unwrap();
@@ -416,7 +414,6 @@ impl ContractService {
                                         record.block_num = log_block_num + 1;
                                         if let Err(e) = handle_events(
                                             &log,
-                                            &logger,
                                             block_timestamp,
                                             &config,
                                             validator_store.clone(),
@@ -431,18 +428,18 @@ impl ContractService {
                                         )
                                         .await
                                         {
-                                            warn!(logger, "process events"; "error reason" => e);
+                                            warn!(info="process events",error_reason=?e);
                                         }
                                     }
                                     let _ = record.to_file(&config.contract_record_path);
                                 }
                                 Err(e) => {
-                                    warn!(logger, "contract service"; "rpc error" => format!("{}, from block: {}, to block {}", e, from_block, to_block));
+                                    warn!(info=format!("{}, from block: {}, to block {}", e, from_block, to_block));
                                 }
                             }
                         }
                         Err(e) => {
-                            warn!(logger, "contract service"; "rpc error" => e.to_string());
+                            warn!(info=e.to_string());
                         }
                     }
                 }
@@ -452,9 +449,8 @@ impl ContractService {
     }
 
     pub fn spawn_validator_monitor<T: SlotClock + 'static, E: EthSpec>(
-        logger: Logger,
         config: Config,
-        validator_store: Arc<ValidatorStore<T, E>>,
+        validator_store: Arc<LighthouseValidatorStore<T, E>>,
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
     ) {
@@ -483,11 +479,10 @@ impl ContractService {
                                 Ok(SafeStakeNetwork::_validatorDatasReturn {_0, _1 , ..}) => {
                                     let paid_block: u64 = _1.try_into().unwrap();
                                     info!(
-                                        logger,
-                                        "validator monitor";
-                                        "validator public key" => %validator_public_key,
-                                        "current block" => current_block,
-                                        "paid block" => paid_block,
+                                        info="validator monitor",
+                                        validator_public_key=%validator_public_key,
+                                        current_block=current_block,
+                                        paid_block=paid_block,
                                     );
                                     if current_block > paid_block {
                                         // validator fee is used up
@@ -498,10 +493,9 @@ impl ContractService {
                                                         Ok(()) => {},
                                                         Err(e) => {
                                                             error!(
-                                                                logger,
-                                                                "failed to disable validator";
-                                                                "validator public key" => %validator_public_key,
-                                                                "error" => %e
+                                                                error=%e,
+                                                                "validator_public_key"= %validator_public_key,
+                                                                "failed to disable validator"
                                                             )
                                                         }
                                                     }
@@ -517,11 +511,10 @@ impl ContractService {
                                                         Ok(()) => {},
                                                         Err(e) => {
                                                             error!(
-                                                                logger,
-                                                                "failed to enable validator";
-                                                                "validator public key" => %validator_public_key,
-                                                                "error" => %e
-                                                            )
+                                                                error=%e,
+                                                                "validator_public_key"= %validator_public_key,
+                                                                "failed to enable validator"
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -532,9 +525,7 @@ impl ContractService {
                                 },
                                 Err(e) => {
                                     error!(
-                                        logger,
-                                        "validator monitor";
-                                        "err" => %e
+                                        error=%e
                                     )
                                 }
                             }
@@ -542,9 +533,7 @@ impl ContractService {
                     }
                     Err(e) => {
                         error!(
-                            logger,
-                            "validator monitor";
-                            "err" => %e
+                            error=%e
                         )
                     }
                 }
@@ -555,10 +544,9 @@ impl ContractService {
 
 async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
     log: &Log,
-    logger: &Logger,
     block_timestamp: u64,
     config: &Config,
-    validator_store: Arc<ValidatorStore<T, E>>,
+    validator_store: Arc<LighthouseValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
     client: &ValidatorClientHttpClient,
@@ -572,7 +560,6 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
         Some(&VALIDATOR_REGISTRATION_TOPIC) => {
             handle_validator_registration(
                 log,
-                logger,
                 block_timestamp,
                 config,
                 db,
@@ -584,16 +571,16 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
             .await?;
         }
         Some(&VALIDATOR_REMOVAL_TOPIC) => {
-            handle_validator_removal(log, logger, config, db, client, validator_keys).await?;
+            handle_validator_removal(log, config, db, client, validator_keys).await?;
         }
         Some(&FEE_RECIPIENT_TOPIC) => {
-            handle_fee_recipient_set(log, logger, validator_store, db, block_timestamp).await?;
+            handle_fee_recipient_set(log, validator_store, db, block_timestamp).await?;
         }
         Some(&VALIDATOR_KEYS_GENERATION) => {
-            handle_validator_key_generation::<E>(log, logger, config, db, sender, spec).await?;
+            handle_validator_key_generation::<E>(log, config, db, sender, spec).await?;
         }
         Some(&VALIDATOR_EXIT_DATA_GENERATION) => {
-            handle_validator_exit::<E>(log, logger, config, client, executor, store_sender, operator_channels, spec).await?;
+            handle_validator_exit::<E>(log, config, client, executor, store_sender, operator_channels, spec).await?;
         }
         _ => {}
     };
@@ -602,7 +589,6 @@ async fn handle_events<T: SlotClock + 'static, E: EthSpec>(
 
 async fn handle_validator_registration(
     log: &Log,
-    logger: &Logger,
     block_timestamp: u64,
     config: &Config,
     db: &SafeStakeDatabase,
@@ -647,11 +633,10 @@ async fn handle_validator_registration(
 
     if operator_ids.contains(&self_operator_id) {
         info!(
-            logger,
-            "validator registration";
-            "owner" => %owner,
-            "public key" => %validator_public_key,
-            "operatrs" => format!("{:?}", operator_ids),
+            info="validator registration",
+            owner=%owner,
+            public_key=%validator_public_key,
+            operatrs=format!("{:?}", operator_ids),
         );
         let mut operator_public_keys = vec![];
         for operator_id in &operator_ids {
@@ -664,7 +649,6 @@ async fn handle_validator_registration(
             .iter()
             .map(|shared_public_key| {
                 PublicKey::deserialize(shared_public_key.as_ref()).map_err(|e: bls::Error| {
-                    error!(logger, "failed to deserialize shared public key");
                     format!("{:?}", e)
                 })
             })
@@ -770,9 +754,8 @@ async fn handle_validator_registration(
             }
             Err(e) => {
                 error!(
-                    logger,
-                    "failed to add validator keystore share";
-                    "error" => %e
+                    error=%e,
+                    "failed to add validator keystore share"
                 );
             }
         };
@@ -792,7 +775,6 @@ async fn handle_validator_registration(
 
 async fn handle_validator_removal(
     log: &Log,
-    logger: &Logger,
     config: &Config,
     db: &SafeStakeDatabase,
     client: &ValidatorClientHttpClient,
@@ -801,7 +783,6 @@ async fn handle_validator_removal(
     let SafeStakeNetwork::ValidatorRemoval { _0, _1 } =
         log.log_decode().map_err(|e| e.to_string())?.inner.data;
     let validator_public_key = PublicKey::deserialize(_1.as_ref()).map_err(|e: bls::Error| {
-        error!(logger, "failed to deserialize shared public key");
         format!("{:?}", e)
     })?;
 
@@ -819,9 +800,8 @@ async fn handle_validator_removal(
         }
         Err(e) => {
             error!(
-                logger,
-                "failed to delete validator keystore share";
-                "error" => %e
+                error= %e,
+                "failed to delete validator keystore share",
             );
         }
     };
@@ -845,17 +825,15 @@ async fn handle_validator_removal(
         .with_transaction(|t| db.delete_validator(t, &validator_public_key))
         .map_err(|e| format!("failed to delete validator {}", e.to_string()));
     info!(
-        logger,
-        "validator removal";
-        "validator public key" => %validator_public_key,
+        info="validator removal",
+        validator_public_key=%validator_public_key,
     );
     Ok(())
 }
 
 async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
     log: &Log,
-    logger: &Logger,
-    validator_store: Arc<ValidatorStore<T, E>>,
+    validator_store: Arc<LighthouseValidatorStore<T, E>>,
     db: &SafeStakeDatabase,
     block_timestamp: u64,
 ) -> Result<(), String> {
@@ -887,11 +865,10 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
         })?;
 
         info!(
-            logger,
-            "setting fee recipient";
-            "validator public key" => %validator_public_key,
-            "fee recipient address" => %fee_recipient,
-            "timestamp" => %block_timestamp
+            info="setting fee recipient",
+            validator_public_key = %validator_public_key,
+            fee_recipient= %fee_recipient,
+            block_timestamp=block_timestamp
         );
     }
     Ok(())
@@ -899,7 +876,6 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
 
 async fn handle_validator_key_generation<E: EthSpec>(
     log: &Log,
-    logger: &Logger,
     config: &Config,
     db: &SafeStakeDatabase,
     sender: &mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
@@ -955,41 +931,27 @@ async fn handle_validator_key_generation<E: EthSpec>(
         
         let tx_hash = log.transaction_hash.unwrap().as_slice().to_vec();
 
-        
-
-
-
         let io = Arc::new(
-            // SecureNetIOCommittee::new(
-            //     config.operator_id as u64,
-            //     config.base_port + DKG_PORT_OFFSET,
-            //     &op_ids,
-            //     &socket_addresses,
-            //     logger.clone()
-            // )
-            // .await?,
             tokio::select! {
                 result = SecureNetIOCommittee::new(
                     config.operator_id as u64,
                     config.base_port + DKG_PORT_OFFSET,
                     &op_ids,
                     &socket_addresses,
-                    logger.clone()
                 ) => {
                     match result {
                         Ok(committee) => {
                             info!(
-                                logger,
-                                "[DKG]: created secure io committee";
-                                "tx_hash" => %hex::encode(tx_hash)
+                                info="[DKG]: created secure io committee",
+                                tx_hash=%hex::encode(tx_hash)
                             );
                             committee
                         },
                         Err(e) => {
                             error!(
-                                logger,
-                                "[DKG]: failed to create secure io committee";
-                                "tx_hash" => %hex::encode(tx_hash),
+                                error=%e,
+                                tx_hash=%hex::encode(tx_hash),
+                                "[DKG]: failed to create secure io committee",
                             );
                             return Err(format!("failed to create secure io committee due to error :{}", e.to_string()));
                         }
@@ -997,9 +959,8 @@ async fn handle_validator_key_generation<E: EthSpec>(
                 },
                 _ = sleep(Duration::from_secs(511)) => {
                     error!(
-                        logger,
-                        "[DKG]: secure io committee timeout";
-                        "tx_hash" => %hex::encode(tx_hash),
+                        tx_hash=%hex::encode(tx_hash),
+                        "[DKG]: secure io committee timeout",
                     );
                     return Err(format!("failed to create secure io committee due to timeout"));
                 }
@@ -1021,12 +982,6 @@ async fn handle_validator_key_generation<E: EthSpec>(
         let addr = rx.await.unwrap().ok_or(format!("failed to find the socket address of cluster node {}", cluster_node_public_key.base64()))?;
 
         let owner_public_key = Secp256k1PublicKey::from_slice(&ownerPubkey).map_err(|e| {
-            error!(
-                logger,
-                "failed to deserialize owner public key";
-                "owner public key" => %ownerPubkey,
-                "error" => %e
-            );
             format!("failed to deserialize owner public key")
         })?;
 
@@ -1115,26 +1070,24 @@ async fn handle_validator_key_generation<E: EthSpec>(
                     match result {
                         Ok(_) => {
                             info!(
-                                logger,
-                                "sent validator key generation request";
-                                "validator key" => %validator_public_key
+                                
+                                info="sent validator key generation request",
+                                validator_public_key= %validator_public_key
                             );
                         },
                         Err(e) => {
                             error!(
-                                logger,
-                                "send validator key generation request failed";
-                                "validator key" => %validator_public_key,
-                                "error" => %e
+                                error= %e,
+                                validator_public_key= %validator_public_key,
+                                "send validator key generation request failed",
                             );
                         }
                     }
                 },
                 _ = sleep(RPC_REQUEST_TIMEOUT) => {
                     error!(
-                        logger,
-                        "send validator key generation request failed";
-                        "validator key" => %validator_public_key
+                        msg="send validator key generation request failed",
+                        validator_public_key=%validator_public_key
                     );
                 }
             }
@@ -1146,7 +1099,6 @@ async fn handle_validator_key_generation<E: EthSpec>(
 
 async fn handle_validator_exit<E: EthSpec>(
     log: &Log,
-    logger: &Logger,
     config: &Config,
     validator_client: &ValidatorClientHttpClient,
     executor: &TaskExecutor,
@@ -1172,10 +1124,9 @@ async fn handle_validator_exit<E: EthSpec>(
             let (message, local_signature, voluntary_exit) = local_sign_voluntary_exit::<E>(&validator_public_key, &config.beacon_nodes, &validator_client, Epoch::from(epoch), spec).await?;
             let _ = store_sender.send((message, local_signature.clone(), validator_public_key.clone())).await;
             info!(
-                logger,
-                "validator voluntary exit";
-                "message" => %message,
-                "epoch" => %epoch
+                info="validator voluntary exit",
+                message=%message,
+                epoch=%epoch
             );
 
             let def = OperatorCommitteeDefinition::from_file(operator_committee_definition_path).map_err(|e| {
@@ -1184,7 +1135,7 @@ async fn handle_validator_exit<E: EthSpec>(
 
             let pos = def.operator_ids.iter().position(|x| *x == config.operator_id).unwrap();
             let operator_shared_public = def.operator_public_keys[pos].clone();
-            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, logger.clone(), operator_channels.clone());
+            let mut committee = DvfOperatorCommittee::from_definition(config.operator_id, def, operator_channels.clone());
             
             committee.add_operator(
                 config.operator_id,
@@ -1208,9 +1159,8 @@ async fn handle_validator_exit<E: EthSpec>(
                 },
                 Err(e) => {
                     error!(
-                        logger, 
-                        "distributed voluntary exit";
-                        "error" => format!("{:?}", e),
+                        error=?e,
+                        "distributed voluntary exit",
                     );
                 }
             }

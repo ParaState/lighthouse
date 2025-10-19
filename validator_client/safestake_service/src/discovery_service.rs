@@ -17,7 +17,7 @@ use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
 use safestake_operator::CHANNEL_SIZE;
 use sensitive_url::SensitiveUrl;
-use slog::{error, info, Logger};
+use tracing::{error, info};
 use std::fs::File;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -45,7 +45,6 @@ pub struct DiscoveryService {}
 
 impl DiscoveryService {
     pub async fn spawn(
-        logger: Logger,
         config: Config,
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
@@ -80,12 +79,11 @@ impl DiscoveryService {
         };
 
         info!(
-            logger,
-            "discovery service";
-            "ip" => %config.ip,
-            "base_port" => config.base_port,
-            "public key" => %config.node_secret.name,
-            "enr" => local_enr.to_base64()
+            info="discovery service",
+            ip=%config.ip,
+            base_port=config.base_port,
+            public_key=%config.node_secret.name,
+            enr=local_enr.to_base64()
         );
 
         let discv_config = ConfigBuilder::new(ListenConfig::Ipv4 {
@@ -113,9 +111,8 @@ impl DiscoveryService {
         boot_enrs.iter().for_each(|enr| {
             discv5.add_enr(enr.clone()).unwrap();
             info!(
-                logger,
-                "discovery service";
-                "boot enr" => enr.to_base64()
+                info="discovery service",
+                boot_enr=enr.to_base64()
             );
             let socketaddr = SocketAddr::new(
                 IpAddr::V4(enr.ip4().expect("boot enr ip should not be empty")),
@@ -147,9 +144,8 @@ impl DiscoveryService {
                             Ok(c) => c,
                             Err(e) => {
                                 error!(
-                                    logger,
-                                    "query_boot";
-                                    "error" => %e
+                                    error=%e,
+                                    "query_boot"
                                 );
                                 notification.send(None).unwrap();
                                 continue;
@@ -170,9 +166,8 @@ impl DiscoveryService {
                             },
                             Err(e) => {
                                 error!(
-                                    logger,
-                                    "query boot node";
-                                    "error" => %e
+                                    error=%e,
+                                    "query boot node"
                                 );
                                 notification.send(None).unwrap()
                             }
@@ -188,9 +183,8 @@ impl DiscoveryService {
                             },
                             Event::SocketUpdated(addr) => {
                                 info!(
-                                    logger,
-                                    "socket address updated";
-                                    "address" => %addr
+                                    info="socket address updated",
+                                    addr=%addr
                                 );
                             }
                             Event::NodeInserted { .. }
@@ -208,7 +202,6 @@ impl DiscoveryService {
     }
 
     pub fn spawn_operator_monitor(
-        logger: Logger,
         validator_dir: PathBuf,
         db: SafeStakeDatabase,
         sender: mpsc::Sender<(SecpPublicKey, oneshot::Sender<Option<SocketAddr>>)>,
@@ -246,7 +239,7 @@ impl DiscoveryService {
                             if committee_def.operator_ids[i] == self_operator_id {
                                 continue;
                             }
-                            if !remote_op_is_active(&logger, committee_def.operator_ids[i], &committee_def.base_socket_addresses[i], &committee_def.node_public_keys[i], &committee_def.validator_public_key, &operator_channels).await {
+                            if !remote_op_is_active(committee_def.operator_ids[i], &committee_def.base_socket_addresses[i], &committee_def.node_public_keys[i], &committee_def.validator_public_key, &operator_channels).await {
                                 let (tx, rx) = oneshot::channel();
                                 sender.send((committee_def.node_public_keys[i].clone(), tx))
                                 .await
@@ -258,22 +251,12 @@ impl DiscoveryService {
                                 }
                                 if committee_def.base_socket_addresses[i] != queried_addr {
                                     info!(
-                                        logger,
-                                        "opertor ip changed";
-                                        "current" => format!("{:?}", committee_def.base_socket_addresses[i]),
-                                        "queried" => queried_addr
+                                        info="opertor ip changed",
+                                        current=format!("{:?}", committee_def.base_socket_addresses[i]),
+                                        queried=?queried_addr
                                     );
                                     committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
-                                    // if let Some(addr) = queried_addr {
-                                    //     let mut c = vec![];
-                                    //     for _i in 0..CHANNEL_SIZE {
-                                    //         c.push(Endpoint::from_shared(format!("http://{}", addr.to_string()))
-                                    //         .unwrap()
-                                    //         .connect_lazy());
-                                    //     }
-                                    //     operator_channels.write().insert(committee_def.operator_ids[i], c);
-                                    // }
                                     {
                                         let mut c = operator_channels.write();
                                         c.remove(&committee_def.operator_ids[i]);
@@ -291,10 +274,9 @@ impl DiscoveryService {
                                 Ok(()) => {}
                                 Err(e) => {
                                     error!(
-                                        logger,
-                                        "failed to disable validator";
-                                        "validator public key" => %validator_public_key,
-                                        "error" => %e
+                                        error= %e,
+                                        validator_public_key= %validator_public_key,
+                                        "failed to disable validator"
                                     )
                                 }
                             }
@@ -306,10 +288,9 @@ impl DiscoveryService {
                                 Ok(()) => {}
                                 Err(e) => {
                                     error!(
-                                        logger,
-                                        "failed to enable validator";
-                                        "validator public key" => %validator_public_key,
-                                        "error" => %e
+                                        error=%e,
+                                        validator_public_key=%validator_public_key,
+                                        "failed to enable validator",
                                     )
                                 }
                             }
@@ -349,7 +330,7 @@ pub fn handle_enr(self_public_key: &SecpPublicKey, db: &SafeStakeDatabase, enr: 
     }
 }
 
-async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<SocketAddr>, node_public_key: &SecpPublicKey, validator_public_key: &PublicKey, operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>) -> bool {
+async fn remote_op_is_active(operator_id: u32, addr: &Option<SocketAddr>, node_public_key: &SecpPublicKey, validator_public_key: &PublicKey, operator_channels: &Arc<RwLock<HashMap<u32, Vec<Channel>>>>) -> bool {
     if addr.is_none() {
         return false;
     }
@@ -363,7 +344,8 @@ async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<So
         }
     };
     let mut client = SafestakeClient::new(channel);
-    let random_hash = Hash256::random();
+    let bytes: [u8; 32] = rand::random();
+    let random_hash = Hash256::new(bytes);
     let request = tonic::Request::new(CheckLivenessRequest {
         version: VERSION,
         msg: random_hash.0.to_vec(),
@@ -376,9 +358,7 @@ async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<So
                     match sig.verify(&Digest::from(&random_hash.0), &node_public_key) {
                         Ok(_) => {
                             info!(
-                                logger,
-                                "discovery operator liveness";
-                                "operator" => operator_id
+                                info="discovery operator liveness",operator_id=operator_id
                             );
                             return true;
                         }
@@ -390,17 +370,16 @@ async fn remote_op_is_active(logger: &Logger, operator_id: u32, addr: &Option<So
         }
         Ok(Err(e)) => {
             error!(
-                logger,
-                "discovery operator liveness error";
-                "error" => %e
+                error= %e,
+                "discovery operator liveness error"
             );
         }
-        Err(_) => {
+        Err(e) => {
             error!(
-                logger,
-                "discovery operator liveness timeout";
-                "operator" => operator_id,
-                "socket address" => addr
+                error= %e,
+                operator=operator_id,
+                socket_address=?addr,
+                "discovery operator liveness timeout"
             );
         }
     }

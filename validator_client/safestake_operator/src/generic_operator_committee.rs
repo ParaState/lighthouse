@@ -2,7 +2,6 @@ use crate::TOperator;
 use async_trait::async_trait;
 use dvf_utils::DvfError;
 use safestake_crypto::secp::SecretKey;
-use slog::Logger;
 use task_executor::TaskExecutor;
 use types::{AttestationData, Hash256, PublicKey, Signature};
 #[async_trait]
@@ -12,7 +11,6 @@ pub trait TOperatorCommittee: Send {
         operator_id: u32,
         validator_public_key: PublicKey,
         t: usize,
-        log: Logger,
     ) -> Self;
     fn add_operator(&mut self, operator_id: u32, operator: Box<dyn TOperator>);
     async fn sign(

@@ -26,7 +26,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 signing_method = { workspace = true }
 slashing_protection = { workspace = true }
-slog = { workspace = true }
 slot_clock = { workspace = true }
 store = { workspace = true }
 task_executor = { workspace = true }
@@ -42,6 +41,8 @@ safe_arith = { workspace = true }
 tree_hash = { workspace = true }
 beacon_node_fallback = { workspace = true }
 either = { workspace = true }
+tracing = { workspace = true }
+lighthouse_validator_store = { workspace = true }
 
 validator_manager = { path = "../../validator_manager" }
 alloy-contract = "0.6.4"

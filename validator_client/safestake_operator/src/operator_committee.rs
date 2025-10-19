@@ -10,7 +10,7 @@ use dvf_utils::{invalid_addr, DvfError, SOFTWARE_VERSION};
 use futures::future::join_all;
 use rand::RngCore;
 use safestake_crypto::{secp::SecretKey, ThresholdSignature};
-use slog::{info, Logger, warn};
+use tracing::info;
 use std::collections::HashMap;
 use task_executor::TaskExecutor;
 use tonic::transport::Endpoint;
@@ -38,7 +38,6 @@ pub struct DvfOperatorCommittee {
     pub validator_public_key: PublicKey,
     threshold: usize,
     operators: HashMap<u32, Box<dyn TOperator>>,
-    pub log: Logger,
 }
 
 #[async_trait]
@@ -48,7 +47,6 @@ impl TOperatorCommittee for DvfOperatorCommittee {
         operator_id: u32,
         validator_public_key: PublicKey,
         t: usize,
-        log: Logger,
     ) -> Self {
         Self {
             node_secret_key,
@@ -56,7 +54,6 @@ impl TOperatorCommittee for DvfOperatorCommittee {
             validator_public_key,
             threshold: t,
             operators: <_>::default(),
-            log,
         }
     }
 
@@ -222,7 +219,6 @@ impl DvfOperatorCommittee {
     pub fn from_definition(
         operator_id: u32,
         def: OperatorCommitteeDefinition,
-        log: Logger,
         operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
     ) -> Self {
         let node_secret_key = NODE_SECRET.get().unwrap();
@@ -231,7 +227,6 @@ impl DvfOperatorCommittee {
             operator_id,
             def.validator_public_key.clone(),
             def.threshold as usize,
-            log.clone(),
         );
         for i in 0..(def.total as usize) {
             let addr = def.base_socket_addresses[i].unwrap_or(invalid_addr());
@@ -259,12 +254,11 @@ impl DvfOperatorCommittee {
                     }
                 }
             };
-            let version = get_operator_version(log.clone(),  def.operator_ids[i]);
+            let version = get_operator_version(def.operator_ids[i]);
             info!(
-                log,
-                "operator software";
-                "operator" => def.operator_ids[i],
-                "version" => version
+                info = "operator software",
+                operator=?def.operator_ids[i],
+                version=?version
             );
 
             let operator = RemoteOperator {
@@ -275,7 +269,6 @@ impl DvfOperatorCommittee {
                 validator_public_key: def.validator_public_key.clone(),
                 operator_node_pk: def.node_public_keys[i].clone(),
                 shared_public_key: def.operator_public_keys[i].clone(),
-                logger: log.clone(),
                 channel: channel,
                 software_version: version
             };
@@ -329,34 +322,30 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
     id
 }
 
-pub fn get_operator_version(log: Logger, operator_id: u32) -> u64 {
+pub fn get_operator_version(operator_id: u32) -> u64 {
     let url_str = format!("{}x/operator/{}", SAFESTAKE_API.get().unwrap(), operator_id);
     let resp = match ureq::post(&url_str).call() {
         Ok(r) => r,
-        Err(e) => {
-            warn!(log, "HTTP request failed: {}", e);
+        Err(_) => {
             return SOFTWARE_VERSION;
         }
     };
     let resp_str = resp.into_string().unwrap();
     let api: ApiResponse = match serde_json::from_str(&resp_str) {
         Ok(api) => api,
-        Err(e) => {
-            warn!(log, "JSON parse failed: {}", e);
+        Err(_) => {
             return SOFTWARE_VERSION;
         }
     };
     let data = match api.data {
         Some(d) => d,
         None => {
-            warn!(log, "No data field in response");
             return SOFTWARE_VERSION;
         }
     };
     match data.last_version.parse::<u64>() {
         Ok(v) => v,
-        Err(e) => {
-            warn!(log, "Parse last_version failed: {}", e);
+        Err(_) => {
             SOFTWARE_VERSION
         }
     }

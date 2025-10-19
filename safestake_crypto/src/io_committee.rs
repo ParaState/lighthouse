@@ -11,7 +11,7 @@ use bytes::Bytes;
 use futures::stream::StreamExt as _;
 use futures::stream::{SplitSink, SplitStream};
 use futures::SinkExt;
-use slog::{info, warn, Logger};
+use tracing::{info, warn};
 use rand::Rng;
 use sha256::digest;
 use std::cmp::min;
@@ -96,7 +96,7 @@ impl Drop for ConnectionManager {
 }
 
 impl ConnectionManager {
-    pub fn new(party: u64, address: SocketAddr, logger: Logger) -> Self {
+    pub fn new(party: u64, address: SocketAddr) -> Self {
         let connections: Arc<RwLock<HashMap<u64, NetIOChannel>>> =
             Arc::new(RwLock::new(HashMap::default()));
         let connections_clone = connections.clone();
@@ -111,18 +111,18 @@ impl ConnectionManager {
                 .await
                 .expect(format!("Failed to bind TCP address {}", address_clone).as_str());
 
-            info!(logger, "[DKG-IO]";  "party" => party, "Listening on" => address_clone);
+            info!(info="[DKG-IO]",party=party, listening_on=?address_clone);
             loop {
                 let (socket, _peer) = match listener.accept().await {
                     Ok(value) => value,
                     Err(e) => {
-                        warn!(logger, "failed to accept connection"; "error" => %e);
+                        warn!(info="failed to accept connection",error=%e);
                         continue;
                     }
                 };
                 let channel = NetIOChannel::new(socket);
                 let peer = bincode::deserialize::<u64>(&channel.recv().await[..]).unwrap();
-                info!(logger, "[DKG-IO]";  "party" => party, "received connection from" => peer);
+                info!(info="[DKG-IO]",party=party,peer=peer);
                 {
                     let mut connections = connections_clone.write().await;
                     connections.insert(peer, channel);
@@ -149,7 +149,7 @@ impl ConnectionManager {
 
     /// Connect from `party` to a peer with `peer_address`.
     /// The `party` id is sent to the peer right after connection to identify itself.
-    pub async fn connect(party: u64, peer: u64, peer_address: SocketAddr, logger: &Logger) -> Option<NetIOChannel> {
+    pub async fn connect(party: u64, peer: u64, peer_address: SocketAddr) -> Option<NetIOChannel> {
         let mut delay = 1000;
         let mut retry = 0;
         loop {
@@ -162,11 +162,11 @@ impl ConnectionManager {
                     channel
                         .send(Bytes::from(bincode::serialize(&party).unwrap()))
                         .await;
-                    info!(logger, "[DKG-IO]"; "party" => party, "connection to party" => peer);
+                    info!(info="[DKG-IO]",party=party, peer=peer);
                     return Some(channel);
                 }
                 Err(_e) => {
-                    warn!(logger, "[DKG-IO]"; "error" => format!("party {}, failed to connect, retry {}", party, retry));
+                    warn!(info="[DKG-IO]",error=format!("party {}, failed to connect, retry {}", party, retry));
                     sleep(Duration::from_millis(delay)).await;
 
                     // Wait an increasing delay before attempting to reconnect.
@@ -302,11 +302,10 @@ impl NetIOCommittee {
         port: u16,
         ids: &[u64],
         addresses: &[SocketAddr],
-        logger: Logger,
     ) -> Result<NetIOCommittee, String> {
-        info!(logger, "[DKG-IO]"; "party" => party, "ids" => format!("{:?}", ids), "address" => format!("{:?}", addresses));
+        info!(info="[DKG-IO]",party=party, ids=format!("{:?}", ids), address=format!("{:?}", addresses));
         let mut connection_manager =
-            ConnectionManager::new(party, SocketAddr::new("0.0.0.0".parse().unwrap(), port), logger.clone());
+            ConnectionManager::new(party, SocketAddr::new("0.0.0.0".parse().unwrap(), port));
         let mut channels: HashMap<u64, NetIOChannel> = Default::default();
         let n = ids.len();
         for i in 0..n {
@@ -315,7 +314,7 @@ impl NetIOCommittee {
             }
             let channel = {
                 if ids[i] < party {
-                    ConnectionManager::connect(party, ids[i], addresses[i], &logger)
+                    ConnectionManager::connect(party, ids[i], addresses[i])
                         .await
                         .ok_or(format!("failed to connect to operator {}: address {}", ids[i], addresses[i]))?
                 } else {
@@ -324,7 +323,7 @@ impl NetIOCommittee {
             };
             channels.insert(ids[i], channel);
         }
-        info!(logger, "[DKG-IO] all channels created");
+        info!(info="[DKG-IO] all channels created");
         let committee = Self {
             party,
             ids: ids.to_vec(),
@@ -343,7 +342,7 @@ impl NetIOCommittee {
                 );
             }
         }
-        info!(logger, "[DKG-IO] all channels connected and acknowledged");
+        info!(info="[DKG-IO] all channels connected and acknowledged");
         Ok(committee)
     }
 
@@ -406,9 +405,8 @@ impl SecureNetIOCommittee {
         port: u16,
         ids: &[u64],
         addresses: &[SocketAddr],
-        logger: Logger,
     ) -> Result<SecureNetIOCommittee, String> {
-        let plain_committee = NetIOCommittee::new(party, port, ids, addresses, logger).await?;
+        let plain_committee = NetIOCommittee::new(party, port, ids, addresses).await?;
         let sk = random_blst_scalar();
         let pk = blst_sk_to_pk(&sk);
 

@@ -1,17 +1,15 @@
 use crate::data_availability_checker::AvailabilityCheckError;
 pub use crate::data_availability_checker::{AvailableBlock, MaybeAvailableBlock};
 use crate::data_column_verification::{CustodyDataColumn, CustodyDataColumnList};
-use crate::eth1_finalization_cache::Eth1FinalizationData;
 use crate::{get_block_root, PayloadVerificationOutcome};
 use derivative::Derivative;
 use state_processing::ConsensusContext;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use types::blob_sidecar::BlobIdentifier;
 use types::{
-    BeaconBlockRef, BeaconState, BlindedPayload, BlobSidecarList, ChainSpec, DataColumnSidecarList,
-    Epoch, EthSpec, Hash256, RuntimeVariableList, SignedBeaconBlock, SignedBeaconBlockHeader, Slot,
+    BeaconBlockRef, BeaconState, BlindedPayload, BlobSidecarList, ChainSpec, Epoch, EthSpec,
+    Hash256, RuntimeVariableList, SignedBeaconBlock, SignedBeaconBlockHeader, Slot,
 };
 
 /// A block that has been received over RPC. It has 2 internal variants:
@@ -265,7 +263,6 @@ impl<E: EthSpec> ExecutedBlock<E> {
 
 /// A block that has completed all pre-deneb block processing checks including verification
 /// by an EL client **and** has all requisite blob data to be imported into fork choice.
-#[derive(PartialEq)]
 pub struct AvailableExecutedBlock<E: EthSpec> {
     pub block: AvailableBlock<E>,
     pub import_data: BlockImportData<E>,
@@ -338,21 +335,12 @@ impl<E: EthSpec> AvailabilityPendingExecutedBlock<E> {
     }
 }
 
-#[derive(Debug, Derivative)]
-#[derivative(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct BlockImportData<E: EthSpec> {
     pub block_root: Hash256,
     pub state: BeaconState<E>,
     pub parent_block: SignedBeaconBlock<E, BlindedPayload<E>>,
-    pub parent_eth1_finalization_data: Eth1FinalizationData,
-    pub confirmed_state_roots: Vec<Hash256>,
     pub consensus_context: ConsensusContext<E>,
-    #[derivative(PartialEq = "ignore")]
-    /// An optional receiver for `DataColumnSidecarList`.
-    ///
-    /// This field is `Some` when data columns are being computed asynchronously.
-    /// The resulting `DataColumnSidecarList` will be sent through this receiver.
-    pub data_column_recv: Option<oneshot::Receiver<DataColumnSidecarList<E>>>,
 }
 
 impl<E: EthSpec> BlockImportData<E> {
@@ -365,13 +353,7 @@ impl<E: EthSpec> BlockImportData<E> {
             block_root,
             state,
             parent_block,
-            parent_eth1_finalization_data: Eth1FinalizationData {
-                eth1_data: <_>::default(),
-                eth1_deposit_index: 0,
-            },
-            confirmed_state_roots: vec![],
             consensus_context: ConsensusContext::new(Slot::new(0)),
-            data_column_recv: None,
         }
     }
 }
@@ -383,7 +365,7 @@ pub trait AsBlock<E: EthSpec> {
     fn parent_root(&self) -> Hash256;
     fn state_root(&self) -> Hash256;
     fn signed_block_header(&self) -> SignedBeaconBlockHeader;
-    fn message(&self) -> BeaconBlockRef<E>;
+    fn message(&self) -> BeaconBlockRef<'_, E>;
     fn as_block(&self) -> &SignedBeaconBlock<E>;
     fn block_cloned(&self) -> Arc<SignedBeaconBlock<E>>;
     fn canonical_root(&self) -> Hash256;
@@ -410,7 +392,7 @@ impl<E: EthSpec> AsBlock<E> for Arc<SignedBeaconBlock<E>> {
         SignedBeaconBlock::signed_block_header(self)
     }
 
-    fn message(&self) -> BeaconBlockRef<E> {
+    fn message(&self) -> BeaconBlockRef<'_, E> {
         SignedBeaconBlock::message(self)
     }
 
@@ -443,25 +425,19 @@ impl<E: EthSpec> AsBlock<E> for MaybeAvailableBlock<E> {
     fn signed_block_header(&self) -> SignedBeaconBlockHeader {
         self.as_block().signed_block_header()
     }
-    fn message(&self) -> BeaconBlockRef<E> {
+    fn message(&self) -> BeaconBlockRef<'_, E> {
         self.as_block().message()
     }
     fn as_block(&self) -> &SignedBeaconBlock<E> {
         match &self {
             MaybeAvailableBlock::Available(block) => block.as_block(),
-            MaybeAvailableBlock::AvailabilityPending {
-                block_root: _,
-                block,
-            } => block,
+            MaybeAvailableBlock::AvailabilityPending { block, .. } => block,
         }
     }
     fn block_cloned(&self) -> Arc<SignedBeaconBlock<E>> {
         match &self {
             MaybeAvailableBlock::Available(block) => block.block_cloned(),
-            MaybeAvailableBlock::AvailabilityPending {
-                block_root: _,
-                block,
-            } => block.clone(),
+            MaybeAvailableBlock::AvailabilityPending { block, .. } => block.clone(),
         }
     }
     fn canonical_root(&self) -> Hash256 {
@@ -490,7 +466,7 @@ impl<E: EthSpec> AsBlock<E> for AvailableBlock<E> {
         self.block().signed_block_header()
     }
 
-    fn message(&self) -> BeaconBlockRef<E> {
+    fn message(&self) -> BeaconBlockRef<'_, E> {
         self.block().message()
     }
 
@@ -523,7 +499,7 @@ impl<E: EthSpec> AsBlock<E> for RpcBlock<E> {
     fn signed_block_header(&self) -> SignedBeaconBlockHeader {
         self.as_block().signed_block_header()
     }
-    fn message(&self) -> BeaconBlockRef<E> {
+    fn message(&self) -> BeaconBlockRef<'_, E> {
         self.as_block().message()
     }
     fn as_block(&self) -> &SignedBeaconBlock<E> {

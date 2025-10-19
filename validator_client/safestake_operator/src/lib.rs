@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use safestake_crypto::secp::{
     Digest, PublicKey as SecpPublicKey, SecretKey as SecpSecretKey, Signature as SecpSignature,
 };
-use slog::{error, info, Logger, warn};
+use tracing::{error, info, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -26,6 +26,7 @@ use flate2::{write::GzEncoder, read::GzDecoder};
 use flate2::Compression;
 use std::io::{Write, Read};
 use tonic::Code;
+use rand::random;
 
 pub const CHANNEL_SIZE: usize = 32;
 
@@ -161,7 +162,6 @@ pub struct RemoteOperator {
     pub validator_public_key: PublicKey,
     pub operator_node_pk: SecpPublicKey,
     pub shared_public_key: PublicKey,
-    pub logger: Logger,
     pub channel: Channel,
     pub software_version: u64
 }
@@ -186,9 +186,8 @@ impl TOperator for RemoteOperator {
                                 Code::Unimplemented => { break; }
                                 _ => {
                                     warn!(
-                                        self.logger,
-                                        "failed to get remote operator's signature";
-                                        "retry" => i
+                                        info="failed to get remote operator's signature",
+                                        retry=?i
                                     );
                                     sleep(Duration::from_millis(200)).await;
                                 }
@@ -198,10 +197,9 @@ impl TOperator for RemoteOperator {
                 },
                 _ = sleep(RPC_REQUEST_TIMEOUT) => {
                     error!(
-                        self.logger,
-                        "operator get signature timeout";
-                        "operator" => self.operator_id,
-                        "socket address" => self.base_address
+                        msg = "operator get signature timeout",
+                        operator=?self.operator_id,
+                        socket_address=?self.base_address
                     );
                 }
             }
@@ -224,27 +222,25 @@ impl TOperator for RemoteOperator {
                 },
                 _ = sleep(RPC_REQUEST_TIMEOUT) => {
                     error!(
-                        self.logger,
-                        "operator get signature timeout";
-                        "operator" => self.operator_id,
-                        "socket address" => self.base_address
+                        msg="operator get signature timeout",
+                        operator=self.operator_id,
+                        socket_address=?self.base_address
                     );
                 }
             }
         }
 
         error!(
-            self.logger,
-            "remote operator signature not found";
-            "operator" => self.operator_id,
-            "msg" => %msg
+            msg="remote operator signature not found",
+            operator=self.operator_id,
         );
         Err(DvfError::SignatureNotFound(format!("{} not found", msg)))
     }
 
     async fn is_active(&self) -> bool {
         let mut client = SafestakeClient::new(self.channel.clone());
-        let random_hash = Hash256::random();
+        let bytes: [u8; 32] = random();
+        let random_hash = Hash256::new(bytes);
         let request = tonic::Request::new(CheckLivenessRequest {
             version: VERSION,
             msg: random_hash.0.to_vec(),
@@ -256,9 +252,8 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            self.logger,
-                            "operator liveness";
-                            "operator" => self.operator_id
+                            info="operator liveness",
+                            operator=?self.operator_id
                         );
                         return true;
                     },
@@ -269,10 +264,9 @@ impl TOperator for RemoteOperator {
             },
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
-                    self.logger,
-                    "operator liveness timeout";
-                    "operator" => self.operator_id,
-                    "socket address" => self.base_address
+                    msg="operator liveness timeout",
+                    operator=?self.operator_id,
+                    socket_address=?self.base_address
                 );
                 return false;
             }
@@ -305,26 +299,23 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(resp) => {
                         info!(
-                            self.logger,
-                            "remote attestation";
-                            "response" => %resp.into_inner().msg
+                            info="remote attestation",
+                            response=?resp.into_inner().msg
                         );
                     },
                     Err(e) => {
                         error!(
-                            self.logger,
-                            "remote attestation error";
-                            "error" => %e
+                            error=?e,
+                            "remote attestation error",
                         );
                     },
                 }
             },
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
-                    self.logger,
-                    "remote attestation timeout";
-                    "operator" => self.operator_id,
-                    "socket address" => self.base_address
+                    msg="remote attestation timeout",
+                    operator=?self.operator_id,
+                    socket_addres=?self.base_address
                 );
             }
         }
@@ -424,26 +415,23 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            self.logger,
-                            "remote proposal full block";
-                            "signing root" => %domain_hash
+                            info="remote proposal full block",
+                            signing_root=%domain_hash
                         );
                     },
                     Err(e) => {
                         error!(
-                            self.logger,
-                            "remote proposal full block error";
-                            "error" => %e
+                            error=?e,
+                            "remote proposal full block error"
                         );
                     },
                 }
             },
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
-                    self.logger,
-                    "remote proposal full block timeout";
-                    "operator" => self.operator_id,
-                    "socket address" => self.base_address
+                    msg="remote proposal full block timeout",
+                    operator=%self.operator_id,
+                    socket_address=%self.base_address
                 );
             }
         }
@@ -472,26 +460,23 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            self.logger,
-                            "remote proposal blinded block";
-                            "signing root" => %domain_hash
+                            info="remote proposal blinded block",
+                            signing_root=%domain_hash
                         );
                     },
                     Err(e) => {
                         error!(
-                            self.logger,
-                            "remote proposal blinded block error";
-                            "error" => %e
+                            error=%e,
+                            "remote proposal blinded block error"
                         );
                     }
                 }
             },
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
-                    self.logger,
-                    "remote proposal blinded block timeout";
-                    "operator" => self.operator_id,
-                    "socket address" => self.base_address
+                    msg="remote proposal full block timeout",
+                    operator=%self.operator_id,
+                    socket_address=%self.base_address
                 );
             }
         }
@@ -521,26 +506,22 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            self.logger,
-                            "simple duty";
-                            "signing root" => %signing_root
+                            info="simple duty",
                         );
                     },
                     Err(e) => {
                         error!(
-                            self.logger,
-                            "simple duty error";
-                            "error" => %e
+                            error=%e,
+                            "simple duty error"
                         );
                     }
                 }
             },
             _ = sleep(RPC_REQUEST_TIMEOUT) => {
                 error!(
-                    self.logger,
-                    "simple duty timeout";
-                    "operator" => self.operator_id,
-                    "socket address" => self.base_address
+                    msg="simple duty timeout",
+                    operator=%self.operator_id,
+                    socket_address=%self.base_address
                 );
             }
         }

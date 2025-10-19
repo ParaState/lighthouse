@@ -4,7 +4,7 @@ use reqwest::{Client, Error};
 use safestake_crypto::secp::{Digest, SecretKey, Signature};
 use safestake_crypto::secret::Secret;
 use serde::{Deserialize, Serialize};
-use slog::{info, Logger};
+use tracing::info;
 use std::time::Duration;
 use task_executor::TaskExecutor;
 use url::Url;
@@ -98,7 +98,6 @@ pub fn status_report(
     node_secret: Secret,
     net_address: String,
     safestake_api: String,
-    logger: Logger,
     exexutor: &TaskExecutor,
 ) {
     exexutor.spawn(
@@ -132,9 +131,8 @@ pub fn status_report(
                 report_body.sign_hex = Some(report_body.sign_digest(&node_secret.secret).unwrap());
                 let url_str = format!("{}{}", safestake_api, "status");
                 info!(
-                    logger,
-                    "status_report";
-                    "report" => format!("{:?}", report_body)
+                    info="status_report",
+                    report=?report_body
                 );
                 let _ = request_to_api(report_body, &url_str).await;
             }

@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use reqwest::{header::ACCEPT, Client};
 use safestake_operator::generic_operator_committee::TOperatorCommittee;
 use safestake_operator::operator_committee::DvfOperatorCommittee;
-use slog::info;
+use tracing::info;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,11 +20,13 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use types::*;
 use url::Url;
+use crate::web3signer::MessageType;
+
 pub use web3signer::Web3SignerObject;
 use web3signer::{ForkInfo, SigningRequest, SigningResponse};
 mod web3signer;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     InconsistentDomains {
         message_type_domain: Domain,
@@ -408,11 +410,7 @@ impl SigningMethod {
 
                 // Determine the Web3Signer message type.
                 let message_type = object.message_type();
-
-                if matches!(
-                    object,
-                    Web3SignerObject::Deposit { .. } | Web3SignerObject::ValidatorRegistration(_)
-                ) && fork_info.is_some()
+                if matches!(message_type, MessageType::ValidatorRegistration) && fork_info.is_some()
                 {
                     return Err(Error::GenesisForkVersionRequired);
                 }
@@ -517,14 +515,13 @@ impl SigningMethod {
                     || operator_committee.is_backup(epoch.as_u64());
 
                 info!(
-                    operator_committee.log,
-                    "Distributed Signing Method";
-                    "Validator" => format!("{:?}", operator_committee.validator_public_key),
-                    "Epoch" => epoch.as_u64(),
-                    "Slot" => slot.as_u64(),
-                    "Duty" => duty,
-                    "Root" => format!("{:?}", signing_root),
-                    "Is aggregator" => is_aggregator
+                    info="Distributed Signing Method",
+                    Validator=?operator_committee.validator_public_key,
+                    Epoch=epoch.as_u64(),
+                    Slot=slot.as_u64(),
+                    Duty=duty,
+                    Root=?signing_root,
+                    Is_aggregator=is_aggregator
                 );
 
                 let keypair = keypair.clone();

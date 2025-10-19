@@ -856,7 +856,7 @@ impl ProtoArrayForkChoice {
     }
 
     /// See `ProtoArray::iter_nodes`
-    pub fn iter_nodes(&self, block_root: &Hash256) -> Iter {
+    pub fn iter_nodes(&self, block_root: &Hash256) -> Iter<'_> {
         self.proto_array.iter_nodes(block_root)
     }
 
@@ -892,6 +892,11 @@ impl ProtoArrayForkChoice {
     /// Should only be used during database schema migrations.
     pub fn core_proto_array_mut(&mut self) -> &mut ProtoArray {
         &mut self.proto_array
+    }
+
+    /// Returns all nodes that have zero children and are descended from the finalized checkpoint.
+    pub fn heads_descended_from_finalization<E: EthSpec>(&self) -> Vec<&ProtoNode> {
+        self.proto_array.heads_descended_from_finalization::<E>()
     }
 }
 

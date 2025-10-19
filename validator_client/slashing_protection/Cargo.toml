@@ -5,9 +5,9 @@ authors = ["Michael Sproul <michael@sigmaprime.io>", "pscott <scottpiriou@gmail.
 edition = { workspace = true }
 autotests = false
 
-[[test]]
-name = "slashing_protection_tests"
-path = "tests/main.rs"
+[features]
+arbitrary-fuzz = ["types/arbitrary-fuzz"]
+portable = ["types/portable"]
 
 [dependencies]
 tempfile = { workspace = true }
@@ -20,10 +20,12 @@ serde_json = { workspace = true }
 arbitrary = { workspace = true, features = ["derive"] }
 ethereum_serde_utils = { workspace = true }
 filesystem = { workspace = true }
+tracing = { workspace = true }
+
 
 [dev-dependencies]
 rayon = { workspace = true }
 
-[features]
-arbitrary-fuzz = ["types/arbitrary-fuzz"]
-portable = ["types/portable"]
+[[test]]
+name = "slashing_protection_tests"
+path = "tests/main.rs"

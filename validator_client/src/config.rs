@@ -10,13 +10,14 @@ use directory::{
 use eth2::types::Graffiti;
 use graffiti_file::GraffitiFile;
 use initialized_validators::Config as InitializedValidatorsConfig;
+use lighthouse_validator_store::Config as ValidatorStoreConfig;
 use sensitive_url::SensitiveUrl;
 use serde::{Deserialize, Serialize};
-use slog::{info, warn, Logger};
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
+use tracing::{info, warn};
 use types::GRAFFITI_BYTES_LEN;
 use validator_http_api::{self, PK_FILENAME};
 use validator_http_metrics;
@@ -28,8 +29,6 @@ use dvf_utils::{
 use safestake_crypto::secret::{Export, Secret};
 use safestake_operator::{NODE_SECRET, SAFESTAKE_API};
 use safestake_service::config::Config as SafeStakeConfig;
-
-use validator_store::Config as ValidatorStoreConfig;
 
 pub const DEFAULT_BEACON_NODE: &str = "http://localhost:5052/";
 
@@ -153,7 +152,6 @@ impl Config {
     pub fn from_cli(
         cli_args: &ArgMatches,
         validator_client_config: &ValidatorClient,
-        log: &Logger,
     ) -> Result<Config, String> {
         let mut config = Config::default();
 
@@ -225,7 +223,10 @@ impl Config {
                 .read_graffiti_file()
                 .map_err(|e| format!("Error reading graffiti file: {:?}", e))?;
             config.graffiti_file = Some(graffiti_file);
-            info!(log, "Successfully loaded graffiti file"; "path" => graffiti_file_path.to_str());
+            info!(
+                path = graffiti_file_path.to_str(),
+                "Successfully loaded graffiti file"
+            );
         }
 
         if let Some(input_graffiti) = validator_client_config.graffiti.as_ref() {
@@ -393,10 +394,9 @@ impl Config {
         config.validator_store.enable_web3signer_slashing_protection =
             if validator_client_config.disable_slashing_protection_web3signer {
                 warn!(
-                    log,
-                    "Slashing protection for remote keys disabled";
-                    "info" => "ensure slashing protection on web3signer is enabled or you WILL \
-                            get slashed"
+                    info = "ensure slashing protection on web3signer is enabled or you WILL \
+                               get slashed",
+                    "Slashing protection for remote keys disabled"
                 );
                 false
             } else {
@@ -409,16 +409,16 @@ impl Config {
 
         // operator id
         config.safestake_config.operator_id = validator_client_config.id;
-        info!(log, "read operator id"; "operator id" => config.safestake_config.operator_id);
+        info!(info="read operator id", operator_id= config.safestake_config.operator_id);
 
         config.safestake_config.ip = validator_client_config.ip.parse().map_err(|_| format!("failed to parse ip {}", validator_client_config.api))?;
-        info!(log, "read operator ip"; "operator ip" => %config.safestake_config.ip);
+        info!(info= "read operator ip",operator_ip=%config.safestake_config.ip);
 
         config.safestake_config.base_port = validator_client_config.base_port;
-        info!(log, "read base port"; "base-port" => config.safestake_config.base_port);
+        info!(info="read base port",base_port =config.safestake_config.base_port);
 
         config.safestake_config.safestake_api = validator_client_config.api.clone();
-        info!(log, "read safestake api"; "safestake api" => %config.safestake_config.safestake_api);
+        info!(info="read safestake api", safestake_api =%config.safestake_config.safestake_api);
 
         // node secret
         let node_secret_path = default_root_dir
@@ -427,7 +427,7 @@ impl Config {
 
         let secret = if node_secret_path.exists() {
             let secret = Secret::read(&node_secret_path)?;
-            info!(log, "read node key"; "operator node public key" => format!("{}", &secret.name));
+            info!(info="read node key", public_key=format!("{}", &secret.name));
             secret
         } else {
             let secret = Secret::new();
@@ -449,28 +449,24 @@ impl Config {
         config.safestake_config.store_path = default_root_dir
             .join(get_network_dir(cli_args))
             .join(DVF_STORE_PATH);
-        info!(log, "read store path"; "store path" => format!("{:?}", &config.safestake_config.store_path));
+        info!(info="read store path",store_path=format!("{:?}", &config.safestake_config.store_path));
 
         config.safestake_config.contract_record_path = default_root_dir
             .join(get_network_dir(cli_args))
             .join(DVF_CONTRACT_BLOCK_PATH);
-        info!(log, "read contract block path"; "contract block path" => format!("{:?}", &config.safestake_config.contract_record_path));
+        info!(info="read contract block path",contract_record_path= format!("{:?}", &config.safestake_config.contract_record_path));
 
         // contract
         config.safestake_config.network_contract = validator_client_config.network_contract.clone();
-        info!(log, "read network contract"; "network-contract" => &config.safestake_config.network_contract);
-
         config.safestake_config.registry_contract = validator_client_config.registry_contract.clone();
-        info!(log, "read registry contract"; "registry-contract" => &config.safestake_config.registry_contract);
-
         config.safestake_config.config_contract = validator_client_config.config_contract.clone();
-        info!(log, "read config contract"; "config-contract" => &config.safestake_config.config_contract);
-
         config.safestake_config.cluster_contract = validator_client_config.cluster_contract.clone();
-        info!(log, "read cluster contract"; "cluster-contract" => &config.safestake_config.cluster_contract);
+
+
+        info!(info="network contracts", network_contract = &config.safestake_config.network_contract, registry_contract=&config.safestake_config.registry_contract, config_contract=&config.safestake_config.config_contract, cluster_contract=&config.safestake_config.cluster_contract);
 
         config.safestake_config.rpc_url = validator_client_config.rpc_url.clone();
-        info!(log, "read rpc-url"; "rpc-url" => &config.safestake_config.rpc_url);
+        info!(info="read rpc-url",rpc_url= &config.safestake_config.rpc_url);
 
         config.safestake_config.beacon_nodes = config.beacon_nodes.clone();
         config.disable_attesting = validator_client_config.disable_attesting;

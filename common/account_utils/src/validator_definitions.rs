@@ -10,12 +10,12 @@ use eth2_keystore::Keystore;
 use eth2_keystore_share::KeystoreShare;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use slog::{error, Logger};
 use std::collections::HashSet;
 use std::fs::{self, create_dir_all, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use tracing::error;
 use types::{graffiti::GraffitiString, Address, PublicKey};
 use validator_dir::{VOTING_KEYSTORE_FILE, VOTING_KEYSTORE_SHARE_FILE};
 use zeroize::Zeroizing;
@@ -353,7 +353,6 @@ impl ValidatorDefinitions {
         &mut self,
         validators_dir: P,
         secrets_dir: P,
-        log: &Logger,
     ) -> Result<usize, Error> {
         let mut keystore_paths = vec![];
         recursively_find_voting_keystores(validators_dir, &mut keystore_paths)
@@ -399,10 +398,9 @@ impl ValidatorDefinitions {
                     Ok(keystore) => keystore,
                     Err(e) => {
                         error!(
-                            log,
-                            "Unable to read validator keystore";
-                            "error" => e,
-                            "keystore" => format!("{:?}", voting_keystore_path)
+                            error = ?e,
+                            keystore = ?voting_keystore_path,
+                            "Unable to read validator keystore"
                         );
                         return None;
                     }
@@ -424,9 +422,8 @@ impl ValidatorDefinitions {
                     }
                     None => {
                         error!(
-                            log,
-                            "Invalid keystore public key";
-                            "keystore" => format!("{:?}", voting_keystore_path)
+                            keystore = ?voting_keystore_path,
+                            "Invalid keystore public key"
                         );
                         return None;
                     }
@@ -474,7 +471,6 @@ impl ValidatorDefinitions {
         &mut self,
         validators_dir: P,
         secrets_dir: P,
-        log: &Logger,
     ) -> Result<usize, Error> {
         let validators_dir: PathBuf = validators_dir.as_ref().to_path_buf();
         let mut keystore_paths = vec![];
@@ -521,10 +517,9 @@ impl ValidatorDefinitions {
                     Ok(keystore) => keystore,
                     Err(e) => {
                         error!(
-                            log,
-                            "Unable to read validator keystore";
-                            "error" => e,
-                            "keystore" => format!("{:?}", voting_keystore_path)
+                            error = ?e,
+                            keystore= ?voting_keystore_path,
+                            "Unable to read validator keystore"
                         );
                         return None;
                     }
@@ -689,10 +684,11 @@ pub fn is_voting_keystore(file_name: &str) -> bool {
     }
 
     // The format exported by the `eth2.0-deposit-cli` library.
+    // The format exported by the `ethstaker-deposit-cli` library.
     //
     // Reference to function that generates keystores:
     //
-    // https://github.com/ethereum/eth2.0-deposit-cli/blob/7cebff15eac299b3b1b090c896dd3410c8463450/eth2deposit/credentials.py#L58-L62
+    // https://github.com/eth-educators/ethstaker-deposit-cli/blob/80d536374de838ccae142974ed0e747b46beb030/ethstaker_deposit/credentials.py#L186-L190
     //
     // Since we include the key derivation path of `m/12381/3600/x/0/0` this should only ever match
     // with a voting keystore and never a withdrawal keystore.

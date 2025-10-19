@@ -17,7 +17,6 @@ safestake_crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-slog = { workspace = true }
 store = { workspace = true }
 task_executor = { workspace = true }
 tokio = { workspace = true }
@@ -25,6 +24,7 @@ types = { workspace = true }
 validator_metrics = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
+tracing = { workspace = true }
 
 alloy-primitives = "0.8.13"
 async-trait = "0.1.83"

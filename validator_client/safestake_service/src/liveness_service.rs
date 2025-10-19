@@ -17,7 +17,7 @@ use safestake_operator::proto::bootnode_client::BootnodeClient;
 use safestake_operator::proto::QueryNodeAddressRequest;
 use safestake_operator::CHANNEL_SIZE;
 use sensitive_url::SensitiveUrl;
-use slog::{error, info, Logger};
+use tracing::{error, info, Logger};
 use std::fs::File;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;

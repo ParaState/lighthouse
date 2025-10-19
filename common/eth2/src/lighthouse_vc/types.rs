@@ -219,3 +219,13 @@ pub struct KeypairShareSignRequest {
 pub struct KeypairShareSignResponse {
     pub signature: Option<Signature>,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateCandidatesRequest {
+    pub beacon_nodes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateCandidatesResponse {
+    pub new_beacon_nodes_list: Vec<String>,
+}

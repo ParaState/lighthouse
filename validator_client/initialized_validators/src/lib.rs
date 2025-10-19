@@ -23,7 +23,6 @@ use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reqwest::{Certificate, Client, Error as ReqwestError, Identity};
 use serde::{Deserialize, Serialize};
 use signing_method::SigningMethod;
-use slog::{debug, error, info, warn, Logger};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -31,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
+use tracing::{debug, error, info, warn};
 use types::graffiti::GraffitiString;
 use types::{Address, Graffiti, Hash256, Keypair, PublicKey, PublicKeyBytes};
 use url::{ParseError, Url};
@@ -174,7 +174,7 @@ pub struct InitializedValidator {
 
 impl InitializedValidator {
     /// Return a reference to this validator's lockfile if it has one.
-    pub fn keystore_lockfile(&self) -> Option<MappedMutexGuard<Lockfile>> {
+    pub fn keystore_lockfile(&self) -> Option<MappedMutexGuard<'_, Lockfile>> {
         match self.signing_method.as_ref() {
             SigningMethod::LocalKeystore {
                 ref voting_keystore_lockfile,
@@ -256,7 +256,6 @@ impl InitializedValidator {
         key_stores: &mut HashMap<PathBuf, Keystore>,
         web3_signer_client_map: &mut Option<HashMap<Web3SignerDefinition, Client>>,
         config: &Config,
-        log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
         operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
     ) -> Result<Self, Error> {
@@ -466,7 +465,7 @@ impl InitializedValidator {
                 let validator_public_key = committee_def.validator_public_key.clone();
                 let local_operator_id = operator_id;
                 let mut committee =
-                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, log, operator_channels);
+                    DvfOperatorCommittee::from_definition(local_operator_id, committee_def, operator_channels);
                 committee.add_operator(
                     local_operator_id,
                     Box::new(LocalOperator {
@@ -629,8 +628,6 @@ pub struct InitializedValidators {
     validators: HashMap<PublicKeyBytes, InitializedValidator>,
     /// The clients used for communications with a remote signer.
     web3_signer_client_map: Option<HashMap<Web3SignerDefinition, Client>>,
-    /// For logging via `slog`.
-    log: Logger,
     config: Config,
     store_sender: Sender<(Hash256, Signature, PublicKey)>,
     operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>
@@ -642,7 +639,6 @@ impl InitializedValidators {
         definitions: ValidatorDefinitions,
         validators_dir: PathBuf,
         config: Config,
-        log: Logger,
         store_sender: Option<Sender<(Hash256, Signature, PublicKey)>>,
         operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
     ) -> Result<Self, Error> {
@@ -652,7 +648,6 @@ impl InitializedValidators {
             validators: HashMap::default(),
             web3_signer_client_map: None,
             config,
-            log,
             store_sender: store_sender.unwrap(),
             operator_channels
         };
@@ -1332,10 +1327,9 @@ impl InitializedValidators {
         for uuid in cache.uuids() {
             if !definitions_map.contains_key(uuid) {
                 debug!(
-                    self.log,
-                    "Resetting the key cache";
-                    "keystore_uuid" => %uuid,
-                    "reason" => "impossible to decrypt due to missing keystore",
+                    keystore_uuid = %uuid,
+                    reason = "impossible to decrypt due to missing keystore",
+                    "Resetting the key cache"
                 );
                 return Ok(KeyCache::new());
             }
@@ -1450,7 +1444,6 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut None,
                             &self.config,
-                            self.log.clone(),
                             None,
                             self.operator_channels.clone()
                         )
@@ -1466,30 +1459,27 @@ impl InitializedValidators {
                                 self.validators
                                     .insert(init.voting_public_key().compress(), init);
                                 info!(
-                                    self.log,
-                                    "Enabled validator";
-                                    "signing_method" => "local_keystore",
-                                    "voting_pubkey" => format!("{:?}", def.voting_public_key),
+                                    signing_method = "local_keystore",
+                                    voting_pubkey = format!("{:?}", def.voting_public_key),
+                                    "Enabled validator"
                                 );
 
                                 if let Some(lockfile_path) = existing_lockfile_path {
                                     warn!(
-                                        self.log,
-                                        "Ignored stale lockfile";
-                                        "path" => lockfile_path.display(),
-                                        "cause" => "Ungraceful shutdown (harmless) OR \
+                                        path = ?lockfile_path.display(),
+                                        cause = "Ungraceful shutdown (harmless) OR \
                                                     non-Lighthouse client using this keystore \
-                                                    (risky)"
+                                                    (risky)",
+                                        "Ignored stale lockfile"
                                     );
                                 }
                             }
                             Err(e) => {
                                 error!(
-                                    self.log,
-                                    "Failed to initialize validator";
-                                    "error" => format!("{:?}", e),
-                                    "signing_method" => "local_keystore",
-                                    "validator" => format!("{:?}", def.voting_public_key)
+                                    error = format!("{:?}", e),
+                                    signing_method = "local_keystore",
+                                    validator = format!("{:?}", def.voting_public_key),
+                                    "Failed to initialize validator"
                                 );
 
                                 // Exit on an invalid validator.
@@ -1504,7 +1494,6 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
-                            self.log.clone(),
                             None,
                             self.operator_channels.clone()
                         )
@@ -1515,19 +1504,17 @@ impl InitializedValidators {
                                     .insert(init.voting_public_key().compress(), init);
 
                                 info!(
-                                    self.log,
-                                    "Enabled validator";
-                                    "signing_method" => "remote_signer",
-                                    "voting_pubkey" => format!("{:?}", def.voting_public_key),
+                                    signing_method = "remote_signer",
+                                    voting_pubkey = format!("{:?}", def.voting_public_key),
+                                    "Enabled validator"
                                 );
                             }
                             Err(e) => {
                                 error!(
-                                    self.log,
-                                    "Failed to initialize validator";
-                                    "error" => format!("{:?}", e),
-                                    "signing_method" => "remote_signer",
-                                    "validator" => format!("{:?}", def.voting_public_key)
+                                    error = format!("{:?}", e),
+                                    signing_method = "remote_signer",
+                                    validator = format!("{:?}", def.voting_public_key),
+                                    "Failed to initialize validator"
                                 );
 
                                 // Exit on an invalid validator.
@@ -1556,7 +1543,6 @@ impl InitializedValidators {
                             &mut key_stores,
                             &mut self.web3_signer_client_map,
                             &self.config,
-                            self.log.clone(),
                             Some(self.store_sender.clone()),
                             self.operator_channels.clone()
                         )
@@ -1572,19 +1558,17 @@ impl InitializedValidators {
                                 self.validators
                                     .insert(init.voting_public_key().compress(), init);
                                 info!(
-                                    self.log,
-                                    "Enabled validator";
-                                    "signing_method" => "distributed_keystore",
-                                    "voting_pubkey" => format!("{:?}", def.voting_public_key),
-                                    "operator" => operator_id,
+                                    info="Enabled validator",
+                                    signing_method="distributed_keystore",
+                                    voting_pubkey=?def.voting_public_key,
+                                    operator=operator_id,
                                 );
 
                                 if let Some(lockfile_path) = existing_lockfile_path {
                                     warn!(
-                                        self.log,
-                                        "Ignored stale lockfile";
-                                        "path" => lockfile_path.display(),
-                                        "cause" => "Ungraceful shutdown (harmless) OR \
+                                        info="Ignored stale lockfile",
+                                        path=?lockfile_path.display(),
+                                        cause="Ungraceful shutdown (harmless) OR \
                                                     non-Lighthouse client using this keystore \
                                                     (risky)"
                                     );
@@ -1592,12 +1576,11 @@ impl InitializedValidators {
                             }
                             Err(e) => {
                                 error!(
-                                    self.log,
-                                    "Failed to initialize validator";
-                                    "error" => format!("{:?}", e),
-                                    "signing_method" => "distributed_keystore",
-                                    "validator" => format!("{:?}", def.voting_public_key),
-                                    "operator" => operator_id,
+                                    error=?e,
+                                    signing_method="distributed_keystore",
+                                    validator=?def.voting_public_key,
+                                    operator=operator_id,
+                                    "Failed to initialize validator"
                                 );
 
                                 // Exit on an invalid validator. zico: Do we need to?
@@ -1630,9 +1613,8 @@ impl InitializedValidators {
                 }
 
                 info!(
-                    self.log,
-                    "Disabled validator";
-                    "voting_pubkey" => format!("{:?}", def.voting_public_key)
+                    voting_pubkey = format!("{:?}", def.voting_public_key),
+                    "Disabled validator"
                 );
             }
         }
@@ -1644,23 +1626,18 @@ impl InitializedValidators {
         }
 
         let validators_dir = self.validators_dir.clone();
-        let log = self.log.clone();
         if has_local_definitions && key_cache.is_modified() {
             tokio::task::spawn_blocking(move || {
                 match key_cache.save(validators_dir) {
-                    Err(e) => warn!(
-                        log,
-                        "Error during saving of key_cache";
-                        "err" => format!("{:?}", e)
-                    ),
-                    Ok(true) => info!(log, "Modified key_cache saved successfully"),
+                    Err(e) => warn!(err = format!("{:?}", e), "Error during saving of key_cache"),
+                    Ok(true) => info!("Modified key_cache saved successfully"),
                     _ => {}
                 };
             })
             .await
             .map_err(Error::TokioJoin)?;
         } else {
-            debug!(log, "Key cache not modified");
+            debug!("Key cache not modified");
         }
 
         // Update the enabled and total validator counts

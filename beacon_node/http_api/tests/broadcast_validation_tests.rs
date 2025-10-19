@@ -317,7 +317,7 @@ pub async fn consensus_gossip() {
 
     /* mandated by Beacon API spec */
     assert_eq!(error_response.status(), Some(StatusCode::BAD_REQUEST));
-    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0xfc675d642ff7a06458eb33c7d7b62a5813e34d1b2bb1aee3e395100b579da026 }".to_string());
+    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0x253405be9aa159bce7b276b8e1d3849c743e673118dfafe8c7d07c203ae0d80d }".to_string());
 }
 
 /// This test checks that a block that is valid from both a gossip and consensus perspective, but nonetheless equivocates, is accepted when using `broadcast_validation=consensus`.
@@ -331,7 +331,6 @@ pub async fn consensus_partial_pass_only_consensus() {
     let validator_count = 64;
     let num_initial: u64 = 31;
     let tester = InteractiveTester::<E>::new(None, validator_count).await;
-    let test_logger = tester.harness.logger().clone();
 
     // Create some chain depth.
     tester.harness.advance_slot();
@@ -379,7 +378,6 @@ pub async fn consensus_partial_pass_only_consensus() {
         ProvenancedBlock::local(gossip_block_b.unwrap(), blobs_b),
         tester.harness.chain.clone(),
         &channel.0,
-        test_logger,
         validation_level,
         StatusCode::ACCEPTED,
         network_globals,
@@ -606,7 +604,7 @@ pub async fn equivocation_gossip() {
 
     /* mandated by Beacon API spec */
     assert_eq!(error_response.status(), Some(StatusCode::BAD_REQUEST));
-    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0xfc675d642ff7a06458eb33c7d7b62a5813e34d1b2bb1aee3e395100b579da026 }".to_string());
+    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0x253405be9aa159bce7b276b8e1d3849c743e673118dfafe8c7d07c203ae0d80d }".to_string());
 }
 
 /// This test checks that a block that is valid from both a gossip and consensus perspective but
@@ -624,7 +622,6 @@ pub async fn equivocation_consensus_late_equivocation() {
     let validator_count = 64;
     let num_initial: u64 = 31;
     let tester = InteractiveTester::<E>::new(None, validator_count).await;
-    let test_logger = tester.harness.logger().clone();
 
     // Create some chain depth.
     tester.harness.advance_slot();
@@ -671,7 +668,6 @@ pub async fn equivocation_consensus_late_equivocation() {
         ProvenancedBlock::local(gossip_block_b.unwrap(), blobs_b),
         tester.harness.chain,
         &channel.0,
-        test_logger,
         validation_level,
         StatusCode::ACCEPTED,
         network_globals,
@@ -1006,7 +1002,7 @@ pub async fn blinded_consensus_gossip() {
 
     /* mandated by Beacon API spec */
     assert_eq!(error_response.status(), Some(StatusCode::BAD_REQUEST));
-    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0xfc675d642ff7a06458eb33c7d7b62a5813e34d1b2bb1aee3e395100b579da026 }".to_string());
+    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0x253405be9aa159bce7b276b8e1d3849c743e673118dfafe8c7d07c203ae0d80d }".to_string());
 }
 
 /// This test checks that a block that is valid from both a gossip and consensus perspective is accepted when using `broadcast_validation=consensus`.
@@ -1216,7 +1212,7 @@ pub async fn blinded_equivocation_gossip() {
     /* mandated by Beacon API spec */
     assert_eq!(error_response.status(), Some(StatusCode::BAD_REQUEST));
 
-    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0xfc675d642ff7a06458eb33c7d7b62a5813e34d1b2bb1aee3e395100b579da026 }".to_string());
+    assert_server_message_error(error_response, "BAD_REQUEST: Invalid block: StateRootMismatch { block: 0x0000000000000000000000000000000000000000000000000000000000000000, local: 0x253405be9aa159bce7b276b8e1d3849c743e673118dfafe8c7d07c203ae0d80d }".to_string());
 }
 
 /// This test checks that a block that is valid from both a gossip and
@@ -1236,7 +1232,6 @@ pub async fn blinded_equivocation_consensus_late_equivocation() {
     let validator_count = 64;
     let num_initial: u64 = 31;
     let tester = InteractiveTester::<E>::new(None, validator_count).await;
-    let test_logger = tester.harness.logger().clone();
 
     // Create some chain depth.
     tester.harness.advance_slot();
@@ -1276,7 +1271,6 @@ pub async fn blinded_equivocation_consensus_late_equivocation() {
         tester.harness.chain.clone(),
         block_a.canonical_root(),
         Arc::new(block_a),
-        test_logger.clone(),
     )
     .await
     .unwrap();
@@ -1284,7 +1278,6 @@ pub async fn blinded_equivocation_consensus_late_equivocation() {
         tester.harness.chain.clone(),
         block_b.canonical_root(),
         block_b.clone(),
-        test_logger.clone(),
     )
     .await
     .unwrap();
@@ -1310,7 +1303,6 @@ pub async fn blinded_equivocation_consensus_late_equivocation() {
         block_b,
         tester.harness.chain,
         &channel.0,
-        test_logger,
         validation_level,
         StatusCode::ACCEPTED,
         network_globals,
@@ -1791,6 +1783,5 @@ fn get_custody_columns(tester: &InteractiveTester<E>) -> HashSet<ColumnIndex> {
         .network_globals
         .as_ref()
         .unwrap()
-        .sampling_columns
-        .clone()
+        .sampling_columns()
 }

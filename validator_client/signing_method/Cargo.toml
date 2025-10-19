@@ -17,8 +17,8 @@ url = { workspace = true }
 validator_metrics = { workspace = true }
 
 eth2_keystore_share = { workspace = true }
-slog = { workspace = true }
 tokio = { workspace = true }
 chrono = { version = "0.4"}
 serde_json = { workspace = true }
 safestake_operator = { workspace = true }
+tracing = { workspace = true }
