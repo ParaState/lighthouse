@@ -1,10 +1,11 @@
 use crate::engines::ForkchoiceState;
 use crate::http::{
     ENGINE_FORKCHOICE_UPDATED_V1, ENGINE_FORKCHOICE_UPDATED_V2, ENGINE_FORKCHOICE_UPDATED_V3,
-    ENGINE_GET_BLOBS_V1, ENGINE_GET_CLIENT_VERSION_V1, ENGINE_GET_PAYLOAD_BODIES_BY_HASH_V1,
-    ENGINE_GET_PAYLOAD_BODIES_BY_RANGE_V1, ENGINE_GET_PAYLOAD_V1, ENGINE_GET_PAYLOAD_V2,
-    ENGINE_GET_PAYLOAD_V3, ENGINE_GET_PAYLOAD_V4, ENGINE_GET_PAYLOAD_V5, ENGINE_NEW_PAYLOAD_V1,
-    ENGINE_NEW_PAYLOAD_V2, ENGINE_NEW_PAYLOAD_V3, ENGINE_NEW_PAYLOAD_V4, ENGINE_NEW_PAYLOAD_V5,
+    ENGINE_GET_BLOBS_V1, ENGINE_GET_BLOBS_V2, ENGINE_GET_CLIENT_VERSION_V1,
+    ENGINE_GET_PAYLOAD_BODIES_BY_HASH_V1, ENGINE_GET_PAYLOAD_BODIES_BY_RANGE_V1,
+    ENGINE_GET_PAYLOAD_V1, ENGINE_GET_PAYLOAD_V2, ENGINE_GET_PAYLOAD_V3, ENGINE_GET_PAYLOAD_V4,
+    ENGINE_GET_PAYLOAD_V5, ENGINE_NEW_PAYLOAD_V1, ENGINE_NEW_PAYLOAD_V2, ENGINE_NEW_PAYLOAD_V3,
+    ENGINE_NEW_PAYLOAD_V4, ENGINE_NEW_PAYLOAD_V5,
 };
 use eth2::types::{
     BlobsBundle, SsePayloadAttributes, SsePayloadAttributesV1, SsePayloadAttributesV2,
@@ -379,7 +380,7 @@ pub enum GetPayloadResponseType<E: EthSpec> {
 }
 
 impl<E: EthSpec> GetPayloadResponse<E> {
-    pub fn execution_payload_ref(&self) -> ExecutionPayloadRef<E> {
+    pub fn execution_payload_ref(&self) -> ExecutionPayloadRef<'_, E> {
         self.to_ref().into()
     }
 }
@@ -553,6 +554,7 @@ pub struct EngineCapabilities {
     pub get_payload_v5: bool,
     pub get_client_version_v1: bool,
     pub get_blobs_v1: bool,
+    pub get_blobs_v2: bool,
 }
 
 impl EngineCapabilities {
@@ -608,6 +610,9 @@ impl EngineCapabilities {
         }
         if self.get_blobs_v1 {
             response.push(ENGINE_GET_BLOBS_V1);
+        }
+        if self.get_blobs_v2 {
+            response.push(ENGINE_GET_BLOBS_V2);
         }
 
         response

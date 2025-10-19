@@ -260,7 +260,7 @@ pub static UNAGGREGATED_ATTESTATION_GOSSIP_VERIFICATION_TIMES: LazyLock<Result<H
     LazyLock::new(|| {
         try_create_histogram(
             "beacon_unaggregated_attestation_gossip_verification_seconds",
-            "Full runtime of aggregated attestation gossip verification",
+            "Full runtime of unaggregated attestation gossip verification",
         )
     });
 
@@ -370,7 +370,7 @@ pub static ATTESTATION_PROCESSING_STATE_SKIP_TIMES: LazyLock<Result<Histogram>> 
     LazyLock::new(|| {
         try_create_histogram(
             "beacon_attestation_processing_state_skip_seconds",
-            "Time spent on reading the state during attestation processing",
+            "Time spent on skipping the state during attestation processing",
         )
     });
 pub static ATTESTATION_PROCESSING_SIGNATURE_SETUP_TIMES: LazyLock<Result<Histogram>> =
@@ -601,22 +601,10 @@ pub static BALANCES_CACHE_MISSES: LazyLock<Result<IntCounter>> = LazyLock::new(|
 /*
  * Persisting BeaconChain components to disk
  */
-pub static PERSIST_HEAD: LazyLock<Result<Histogram>> = LazyLock::new(|| {
-    try_create_histogram(
-        "beacon_persist_head",
-        "Time taken to persist the canonical head",
-    )
-});
 pub static PERSIST_OP_POOL: LazyLock<Result<Histogram>> = LazyLock::new(|| {
     try_create_histogram(
         "beacon_persist_op_pool",
         "Time taken to persist the operations pool",
-    )
-});
-pub static PERSIST_ETH1_CACHE: LazyLock<Result<Histogram>> = LazyLock::new(|| {
-    try_create_histogram(
-        "beacon_persist_eth1_cache",
-        "Time taken to persist the eth1 caches",
     )
 });
 pub static PERSIST_FORK_CHOICE: LazyLock<Result<Histogram>> = LazyLock::new(|| {
@@ -1346,13 +1334,14 @@ pub static BEACON_BLOCK_DELAY_OBSERVED_SLOT_START: LazyLock<Result<IntGauge>> =
         )
     });
 
-pub static BEACON_BLOB_DELAY_ALL_OBSERVED_SLOT_START: LazyLock<Result<IntGauge>> =
-    LazyLock::new(|| {
+pub static BEACON_BLOB_DELAY_ALL_OBSERVED_SLOT_START: LazyLock<Result<IntGauge>> = LazyLock::new(
+    || {
         try_create_int_gauge(
             "beacon_blob_delay_all_observed_slot_start",
-            "Duration between the start of the block's slot and the time the block was observed.",
+            "Duration between the start of the block's slot and the time when all blobs have been observed.",
         )
-    });
+    },
+);
 
 pub static BEACON_BLOCK_DELAY_CONSENSUS_VERIFICATION_TIME: LazyLock<Result<IntGauge>> =
     LazyLock::new(|| {
@@ -1662,28 +1651,37 @@ pub static DATA_COLUMN_SIDECAR_GOSSIP_VERIFICATION_TIMES: LazyLock<Result<Histog
 pub static BLOBS_FROM_EL_HIT_TOTAL: LazyLock<Result<IntCounter>> = LazyLock::new(|| {
     try_create_int_counter(
         "beacon_blobs_from_el_hit_total",
-        "Number of blob batches fetched from the execution layer",
+        "Number of non-empty blob batches fetched from the execution layer",
     )
 });
 
 pub static BLOBS_FROM_EL_MISS_TOTAL: LazyLock<Result<IntCounter>> = LazyLock::new(|| {
     try_create_int_counter(
         "beacon_blobs_from_el_miss_total",
-        "Number of blob batches failed to fetch from the execution layer",
+        "Number of empty or incomplete blob responses from the execution layer",
     )
 });
 
-pub static BLOBS_FROM_EL_EXPECTED_TOTAL: LazyLock<Result<IntCounter>> = LazyLock::new(|| {
+pub static BLOBS_FROM_EL_ERROR_TOTAL: LazyLock<Result<IntCounter>> = LazyLock::new(|| {
     try_create_int_counter(
-        "beacon_blobs_from_el_expected_total",
+        "beacon_blobs_from_el_error_total",
+        "Number of failed blob fetches from the execution layer",
+    )
+});
+
+pub static BLOBS_FROM_EL_EXPECTED: LazyLock<Result<Histogram>> = LazyLock::new(|| {
+    try_create_histogram_with_buckets(
+        "beacon_blobs_from_el_expected",
         "Number of blobs expected from the execution layer",
+        Ok(vec![0.0, 3.0, 6.0, 9.0, 12.0, 18.0, 24.0, 30.0]),
     )
 });
 
-pub static BLOBS_FROM_EL_RECEIVED_TOTAL: LazyLock<Result<IntCounter>> = LazyLock::new(|| {
-    try_create_int_counter(
+pub static BLOBS_FROM_EL_RECEIVED: LazyLock<Result<Histogram>> = LazyLock::new(|| {
+    try_create_histogram_with_buckets(
         "beacon_blobs_from_el_received_total",
         "Number of blobs fetched from the execution layer",
+        linear_buckets(0.0, 4.0, 20),
     )
 });
 
