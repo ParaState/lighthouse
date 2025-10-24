@@ -16,7 +16,7 @@ eth2_keystore_share = { workspace = true }
 hex = { workspace = true }
 lighthouse_network = { workspace = true }
 parking_lot = { workspace = true }
-rand = { workspace = true, features = ["small_rng"] }
+rand = { version = "0.8.5", features = ["small_rng"] }
 reqwest = { workspace = true, features = ["native-tls"] }
 safestake_crypto = { workspace = true }
 safestake_operator = { workspace = true }
@@ -45,13 +45,14 @@ tracing = { workspace = true }
 lighthouse_validator_store = { workspace = true }
 
 validator_manager = { path = "../../validator_manager" }
-alloy-contract = "0.6.4"
-alloy-primitives = "0.8.13"
-alloy-provider = "0.6.4"
-alloy-rpc-types = "0.6.4"
-alloy-sol-macro = "0.8.13"
-alloy-sol-types = "0.8.13"
-alloy-transport-http = "0.6.4"
+alloy-contract = "1.0"
+alloy-primitives = { version = "1.4", features = ["serde"] }
+alloy-provider = "1.0"
+alloy-rpc-types = "1.0"
+alloy-sol-macro = "1.4"
+alloy-sol-types = "1.4"
+alloy-transport-http = "1.0"
+alloy-network = "1.0"
 keccak-hash = "0.10.0"
 tonic = "0.11"
 base64 = "0.22.1"

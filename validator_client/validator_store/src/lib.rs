@@ -24,6 +24,7 @@ pub enum Error<T> {
     UnableToSignAttestation(AttestationError),
     SpecificError(T),
     UnableToSign(SigningError),
+    Middleware(String),
 }
 
 impl<T> From<T> for Error<T> {

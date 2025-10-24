@@ -258,6 +258,15 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
         Ok(())
     }
 
+    // async fn post_beacon_blinded_blocks(&self, signed_block: &SignedBeaconBlock<E, BlindedPayload<E>>, beacon_node: BeaconNodeHttpClient) -> Result<(), Status> {
+    //     beacon_node
+    //         .post_beacon_blinded_blocks_v2_ssz(&signed_block, None)
+    //         .await
+    //         .map(|| ()) 
+    //         .or_else(|e| handle_block_post_error(e, slot))?;
+    //     Ok::<_, Status>(())
+    // }
+
 }
 
 #[tonic::async_trait]
@@ -774,11 +783,11 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             }
         };
         let signing_root = signed_block.message().signing_root(domain_hash);
-        let slot = signed_block.slot();
+        let slot = signed_block.slot().as_u64();
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
             info="received broadcast full block",
-            slot=slot.as_u64(),
+            slot=slot,
             validator_public_key=hex::encode(&req.validator_public_key),
         );
         self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
@@ -791,8 +800,10 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
                 beacon_node
                     .post_beacon_blocks_v2_ssz(&request, None)
                     .await
-                    .or_else(|e| handle_block_post_error(e, slot))
-            }   
+                    .map(|_| ())
+                    .or_else(|e| handle_block_post_error(e, slot))?;
+                Ok::<_, Status>(())
+            }
         }).await.map_err(|_| {
             Status::internal(format!(
                 "Unable to publish block by leader"
@@ -801,7 +812,7 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         info!(
             info="Successfully published full block by leader",
             validator_public_key=hex::encode(&req.validator_public_key),
-            slot= signed_block.slot().as_u64(),
+            slot=slot,
         );
         Ok(Response::new(EmptyResponse { }))
     }
@@ -829,21 +840,24 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             }
         };
         let signing_root = signed_block.message().signing_root(domain_hash);
-        let slot = signed_block.slot();
+        let slot = signed_block.slot().as_u64();
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
             info="received broadcast blinded block",
-            slot= slot.as_u64(),
+            slot=slot,
             validator_public_key=hex::encode(&req.validator_public_key),
         );
+
         self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
             let signed_block = signed_block.clone();
             async move {
                 beacon_node
                     .post_beacon_blinded_blocks_v2_ssz(&signed_block, None)
                     .await
-                    .or_else(|e| handle_block_post_error(e, slot))
-            }   
+                    .map(|_| ()) 
+                    .or_else(|e| handle_block_post_error(e, slot))?;
+                Ok::<_, Status>(())
+            }
         }).await.map_err(|_| {
             Status::internal(format!(
                 "Unable to publish block by leader"
@@ -852,26 +866,28 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         info!(
             info="Successfully published blinded block by leader",
             validator_public_key=hex::encode(&req.validator_public_key),
-            slot=signed_block.slot().as_u64(),
+            slot=slot,
         );
         Ok(Response::new(EmptyResponse { }))
     }
 }
 
-fn handle_block_post_error(err: eth2::Error, slot: Slot) -> Result<(), Status> {
+
+
+fn handle_block_post_error(err: eth2::Error, slot: u64) -> Result<(), Status> {
     // Handle non-200 success codes.
     if let Some(status) = err.status() {
         if status == eth2::StatusCode::ACCEPTED {
             info!(
                 info="Block is already known to BN or might be invalid",
-                slot=slot.as_u64(),
+                slot=slot,
                 status_code=status.as_u16(),
             );
             return Ok(());
         } else if status.is_success() {
             warn!(
                 info="Block published with non-standard success code",
-                slot=slot.as_u64(),
+                slot=slot,
                 status_code=status.as_u16(),
             );
             return Ok(());

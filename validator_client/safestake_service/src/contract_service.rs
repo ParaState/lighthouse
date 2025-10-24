@@ -3,10 +3,11 @@ use account_utils::default_operator_committee_definition_path;
 use account_utils::operator_committee_definitions::OperatorCommitteeDefinition;
 use account_utils::validator_definitions::ValidatorDefinitions;
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactionsKind, Filter, Log};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolEvent;
+use alloy_network::Ethereum;
 use alloy_transport_http::{Client, Http};
 use bls::FixedBytesExtended;
 use eth2::lighthouse_vc::{
@@ -135,11 +136,10 @@ sol!(
     }
 );
 
-type T = Http<Client>;
-type P = RootProvider<T>;
-type SafeStakeRegistryContract = SafeStakeRegistry::SafeStakeRegistryInstance<T, P>;
-type SafeStakeNetworkContract = SafeStakeNetwork::SafeStakeNetworkInstance<T, P>;
-type SafeStakeConfigContract = SafeStakeConfig::SafeStakeConfigInstance<T, P>;
+type P = RootProvider<Ethereum>;
+type SafeStakeRegistryContract = SafeStakeRegistry::SafeStakeRegistryInstance<P>;
+type SafeStakeNetworkContract = SafeStakeNetwork::SafeStakeNetworkInstance<P>;
+type SafeStakeConfigContract = SafeStakeConfig::SafeStakeConfigInstance<P>;
 // type SafeStakeClusterNodeContract = SafeStakeClusterNode::SafeStakeClusterNodeInstance<T, P>;
 
 const VALIDATOR_REGISTRATION_TOPIC: alloy_primitives::FixedBytes<32> =
@@ -183,8 +183,8 @@ impl SafeStakeRegistryContract {
 
 impl SafeStakeConfigContract {
     async fn query_owner_fee_recipient(&self, owner: Address) -> Result<Address, String> {
-        let SafeStakeConfig::getFeeRecipientAddressReturn { _0 } = self.getFeeRecipientAddress(owner).call().await.map_err(|e| e.to_string())?;
-        Ok(_0)
+        let address = self.getFeeRecipientAddress(owner).call().await.map_err(|e| e.to_string())?;
+        Ok(address)
     }
 }
 
@@ -229,7 +229,7 @@ pub struct ContractService {}
 
 impl ContractService {
     pub async fn preparation(config: &Config, db: &SafeStakeDatabase) -> Result<(), String> {
-        let provider: P = ProviderBuilder::new().on_http(
+        let provider: P = RootProvider::new_http(
             config
                 .rpc_url
                 .parse::<reqwest::Url>()
@@ -255,12 +255,12 @@ impl ContractService {
         }
 
         // query_all_operators
-        let SafeStakeRegistry::_lastOperatorIdReturn { _0 } = registry_contract
+        let op_id = registry_contract
             ._lastOperatorId()
             .call()
             .await
             .map_err(|e| e.to_string()).unwrap();
-        let last_id: u64 = _0.try_into().unwrap();
+        let last_id: u64 = op_id.try_into().unwrap();
         for i in 1..last_id + 1 {
             let op = registry_contract.query_operator(i as u32).await?;
             db.with_transaction(|t| db.insert_operator(t, &op))
@@ -272,7 +272,7 @@ impl ContractService {
     }
 
     pub async fn set_validators_fee_recipient(config: &Config, db: &SafeStakeDatabase, validator_defs: &mut ValidatorDefinitions) -> Result<(), String> {
-        let provider: P = ProviderBuilder::new().on_http(
+        let provider: P = RootProvider::new_http(
             config
                 .rpc_url
                 .parse::<reqwest::Url>()
@@ -343,8 +343,12 @@ impl ContractService {
         operator_channels: Arc<RwLock<HashMap<u32, Vec<Channel>>>>,
         spec: Arc<ChainSpec>
     ) {
-        let provider: P =
-            ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
+        let provider: P = RootProvider::new_http(
+            config
+                .rpc_url
+                .parse::<reqwest::Url>()
+                .map_err(|e| e.to_string()).unwrap(),
+        );
         let mut record = match BlockRecord::from_file(&config.contract_record_path) {
             Ok(r) => r,
             Err(_) => {
@@ -454,8 +458,12 @@ impl ContractService {
         db: SafeStakeDatabase,
         executor: &TaskExecutor,
     ) {
-        let provider: P =
-            ProviderBuilder::new().on_http(config.rpc_url.parse::<reqwest::Url>().unwrap());
+        let provider: P = RootProvider::new_http(
+            config
+                .rpc_url
+                .parse::<reqwest::Url>()
+                .map_err(|e| e.to_string()).unwrap(),
+        );
         let network_contract = SafeStakeNetworkContract::new(
             config.network_contract.parse::<Address>().unwrap(),
             provider.clone(),
@@ -610,7 +618,7 @@ async fn handle_validator_registration(
         .map_err(|_| format!("failed to deserialize validator public key"))?;
     let operator_ids = _2;
     let self_operator_id = config.operator_id;
-    let provider: P = ProviderBuilder::new().on_http(
+    let provider: P = RootProvider::new_http(
         config
             .rpc_url
             .parse::<reqwest::Url>()
@@ -891,7 +899,7 @@ async fn handle_validator_key_generation<E: EthSpec>(
         withdrawAddress,
     } = log.log_decode().map_err(|e| e.to_string())?.inner.data;
     if operatorIds.contains(&config.operator_id) {
-        let provider: P = ProviderBuilder::new().on_http(
+        let provider: P = RootProvider::new_http(
             config
                 .rpc_url
                 .parse::<reqwest::Url>()
@@ -1184,8 +1192,7 @@ pub fn convert_validator_public_key_to_id(public_key: &[u8]) -> u64 {
 async fn qeury_block_timestamp(provider: &P, block_number: u64) -> u64 {
     match provider
         .get_block(
-            BlockId::Number(BlockNumberOrTag::Number(block_number)),
-            BlockTransactionsKind::Hashes,
+            BlockId::Number(BlockNumberOrTag::Number(block_number))
         )
         .await
     {
@@ -1300,7 +1307,9 @@ async fn test_rpc_parse() {
     let rpc_url = "https://ethereum-holesky-rpc.publicnode.com"
         .parse::<reqwest::Url>()
         .unwrap();
-    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let provider: P = RootProvider::new_http(
+        rpc_url
+    );
     let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
     let network_address = address!("34637C3bE556BD8fD6A6a741669a501B79A79e3B");
     let config_address = address!("1EFB8c90381695584CcB117388Bba897b71e0635");
@@ -1426,7 +1435,7 @@ async fn test_rpc_operator_id() {
     let rpc_url = "https://ethereum-holesky-rpc.publicnode.com"
         .parse::<reqwest::Url>()
         .unwrap();
-    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let provider: P = RootProvider::new_http(rpc_url);
     let registry_address = address!("997dB01eD539e06D59aA3e79F7D2Edb2Ad3aD8AA");
     let config_address = address!("1EFB8c90381695584CcB117388Bba897b71e0635");
     let registry_contract = SafeStakeRegistryContract::new(
@@ -1461,7 +1470,7 @@ async fn test_rpc_query_validator() {
     let rpc_url = "https://ethereum-rpc.publicnode.com"
         .parse::<reqwest::Url>()
         .unwrap();
-    let provider: P = ProviderBuilder::new().on_http(rpc_url);
+    let provider: P = RootProvider::new_http(rpc_url);
     let registry_address = address!("1a1f82f0365571A0b06df0992FC4D1BCc5Fdc6aD");
     let network_address = address!("829f3c089fE315FCB2BC9506B237BB56b7c3335B");
     let config_address = address!("07FA0F7f3C67e4cdE0FC23A072dcD712CF9a06C1");

@@ -12,12 +12,12 @@ mod share_builder;
 mod validator_dir;
 
 pub use crate::validator_dir::{
-    unlock_keypair_from_password_path, Error, Eth1DepositData, ValidatorDir,
-    ETH1_DEPOSIT_TX_HASH_FILE,
+    ETH1_DEPOSIT_TX_HASH_FILE, Error, Eth1DepositData, ValidatorDir,
+    unlock_keypair_from_password_path,
 };
 pub use builder::{
-    keystore_password_path, write_password_to_file, Builder, Error as BuilderError,
-    ETH1_DEPOSIT_DATA_FILE, VOTING_KEYSTORE_FILE, WITHDRAWAL_KEYSTORE_FILE,
+    Builder, ETH1_DEPOSIT_DATA_FILE, Error as BuilderError, VOTING_KEYSTORE_FILE,
+    WITHDRAWAL_KEYSTORE_FILE, keystore_password_path, write_password_to_file
 };
 pub use share_builder::ShareBuilder;
 pub use share_builder::VOTING_KEYSTORE_SHARE_FILE;

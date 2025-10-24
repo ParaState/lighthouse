@@ -8,7 +8,7 @@ use eth2_keystore::Keystore;
 use eth2_keystore_share::KeystoreShare;
 use lockfile::Lockfile;
 use parking_lot::Mutex;
-use reqwest::{header::ACCEPT, Client};
+use reqwest::{Client, header::ACCEPT};
 use safestake_operator::generic_operator_committee::TOperatorCommittee;
 use safestake_operator::operator_committee::DvfOperatorCommittee;
 use tracing::info;
