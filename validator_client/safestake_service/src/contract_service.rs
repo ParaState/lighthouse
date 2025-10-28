@@ -360,8 +360,8 @@ impl ContractService {
             }
         };
         info!(
-            info="pull event logs",
-            record_block=record.block_num
+            record_block=record.block_num,
+            "pull event logs"
         );
         let registry_address = config.registry_contract.parse::<Address>().unwrap();
         let network_address = config.network_contract.parse::<Address>().unwrap();
@@ -432,18 +432,18 @@ impl ContractService {
                                         )
                                         .await
                                         {
-                                            warn!(info="process events",error_reason=?e);
+                                            warn!(error_reason=?e, "process events");
                                         }
                                     }
                                     let _ = record.to_file(&config.contract_record_path);
                                 }
                                 Err(e) => {
-                                    warn!(info=format!("{}, from block: {}, to block {}", e, from_block, to_block));
+                                    warn!(error=format!("{}, from block: {}, to block {}", e, from_block, to_block), "get logs error");
                                 }
                             }
                         }
                         Err(e) => {
-                            warn!(info=e.to_string());
+                            warn!(error=e.to_string(), "get block number error");
                         }
                     }
                 }
@@ -487,10 +487,10 @@ impl ContractService {
                                 Ok(SafeStakeNetwork::_validatorDatasReturn {_0, _1 , ..}) => {
                                     let paid_block: u64 = _1.try_into().unwrap();
                                     info!(
-                                        info="validator monitor",
                                         validator_public_key=%validator_public_key,
                                         current_block=current_block,
                                         paid_block=paid_block,
+                                        "validator monitor",
                                     );
                                     if current_block > paid_block {
                                         // validator fee is used up
@@ -641,10 +641,10 @@ async fn handle_validator_registration(
 
     if operator_ids.contains(&self_operator_id) {
         info!(
-            info="validator registration",
             owner=%owner,
             public_key=%validator_public_key,
             operatrs=format!("{:?}", operator_ids),
+            "validator registration",
         );
         let mut operator_public_keys = vec![];
         for operator_id in &operator_ids {
@@ -833,8 +833,8 @@ async fn handle_validator_removal(
         .with_transaction(|t| db.delete_validator(t, &validator_public_key))
         .map_err(|e| format!("failed to delete validator {}", e.to_string()));
     info!(
-        info="validator removal",
         validator_public_key=%validator_public_key,
+        "validator removal",
     );
     Ok(())
 }
@@ -873,10 +873,10 @@ async fn handle_fee_recipient_set<T: SlotClock + 'static, E: EthSpec>(
         })?;
 
         info!(
-            info="setting fee recipient",
             validator_public_key = %validator_public_key,
             fee_recipient= %fee_recipient,
-            block_timestamp=block_timestamp
+            block_timestamp=block_timestamp,
+            "setting fee recipient",
         );
     }
     Ok(())
@@ -950,8 +950,8 @@ async fn handle_validator_key_generation<E: EthSpec>(
                     match result {
                         Ok(committee) => {
                             info!(
-                                info="[DKG]: created secure io committee",
-                                tx_hash=%hex::encode(tx_hash)
+                                tx_hash=%hex::encode(tx_hash),
+                                "[DKG]: created secure io committee",
                             );
                             committee
                         },
@@ -1078,9 +1078,8 @@ async fn handle_validator_key_generation<E: EthSpec>(
                     match result {
                         Ok(_) => {
                             info!(
-                                
-                                info="sent validator key generation request",
-                                validator_public_key= %validator_public_key
+                                validator_public_key= %validator_public_key,
+                                "sent validator key generation request",
                             );
                         },
                         Err(e) => {
@@ -1132,9 +1131,9 @@ async fn handle_validator_exit<E: EthSpec>(
             let (message, local_signature, voluntary_exit) = local_sign_voluntary_exit::<E>(&validator_public_key, &config.beacon_nodes, &validator_client, Epoch::from(epoch), spec).await?;
             let _ = store_sender.send((message, local_signature.clone(), validator_public_key.clone())).await;
             info!(
-                info="validator voluntary exit",
                 message=%message,
-                epoch=%epoch
+                epoch=%epoch,
+                "validator voluntary exit",
             );
 
             let def = OperatorCommitteeDefinition::from_file(operator_committee_definition_path).map_err(|e| {

@@ -79,11 +79,12 @@ impl DiscoveryService {
         };
 
         info!(
-            info="discovery service",
+            
             ip=%config.ip,
             base_port=config.base_port,
             public_key=%config.node_secret.name,
-            enr=local_enr.to_base64()
+            enr=local_enr.to_base64(),
+            "discovery service",
         );
 
         let discv_config = ConfigBuilder::new(ListenConfig::Ipv4 {
@@ -111,8 +112,8 @@ impl DiscoveryService {
         boot_enrs.iter().for_each(|enr| {
             discv5.add_enr(enr.clone()).unwrap();
             info!(
-                info="discovery service",
-                boot_enr=enr.to_base64()
+                boot_enr=enr.to_base64(),
+                "discovery service",
             );
             let socketaddr = SocketAddr::new(
                 IpAddr::V4(enr.ip4().expect("boot enr ip should not be empty")),
@@ -183,8 +184,8 @@ impl DiscoveryService {
                             },
                             Event::SocketUpdated(addr) => {
                                 info!(
-                                    info="socket address updated",
-                                    addr=%addr
+                                    addr=%addr,
+                                    "socket address updated",
                                 );
                             }
                             Event::NodeInserted { .. }
@@ -251,9 +252,9 @@ impl DiscoveryService {
                                 }
                                 if committee_def.base_socket_addresses[i] != queried_addr {
                                     info!(
-                                        info="opertor ip changed",
                                         current=format!("{:?}", committee_def.base_socket_addresses[i]),
-                                        queried=?queried_addr
+                                        queried=?queried_addr,
+                                        "opertor ip changed",
                                     );
                                     committee_def.base_socket_addresses[i] = queried_addr;
                                     restart = true;
@@ -358,7 +359,7 @@ async fn remote_op_is_active(operator_id: u32, addr: &Option<SocketAddr>, node_p
                     match sig.verify(&Digest::from(&random_hash.0), &node_public_key) {
                         Ok(_) => {
                             info!(
-                                info="discovery operator liveness",operator_id=operator_id
+                                operator_id=operator_id, "discovery operator liveness"
                             );
                             return true;
                         }

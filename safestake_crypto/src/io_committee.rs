@@ -111,18 +111,18 @@ impl ConnectionManager {
                 .await
                 .expect(format!("Failed to bind TCP address {}", address_clone).as_str());
 
-            info!(info="[DKG-IO]",party=party, listening_on=?address_clone);
+            info!(party=party, listening_on=?address_clone, "[DKG-IO]");
             loop {
                 let (socket, _peer) = match listener.accept().await {
                     Ok(value) => value,
                     Err(e) => {
-                        warn!(info="failed to accept connection",error=%e);
+                        warn!(error=%e, "failed to accept connection");
                         continue;
                     }
                 };
                 let channel = NetIOChannel::new(socket);
                 let peer = bincode::deserialize::<u64>(&channel.recv().await[..]).unwrap();
-                info!(info="[DKG-IO]",party=party,peer=peer);
+                info!(party=party,peer=peer, "[DKG-IO]");
                 {
                     let mut connections = connections_clone.write().await;
                     connections.insert(peer, channel);
@@ -162,11 +162,11 @@ impl ConnectionManager {
                     channel
                         .send(Bytes::from(bincode::serialize(&party).unwrap()))
                         .await;
-                    info!(info="[DKG-IO]",party=party, peer=peer);
+                    info!(party=party, peer=peer, "[DKG-IO]");
                     return Some(channel);
                 }
                 Err(_e) => {
-                    warn!(info="[DKG-IO]",error=format!("party {}, failed to connect, retry {}", party, retry));
+                    warn!(error=format!("party {}, failed to connect, retry {}", party, retry), "[DKG-IO]");
                     sleep(Duration::from_millis(delay)).await;
 
                     // Wait an increasing delay before attempting to reconnect.
@@ -303,7 +303,7 @@ impl NetIOCommittee {
         ids: &[u64],
         addresses: &[SocketAddr],
     ) -> Result<NetIOCommittee, String> {
-        info!(info="[DKG-IO]",party=party, ids=format!("{:?}", ids), address=format!("{:?}", addresses));
+        info!(party=party, ids=format!("{:?}", ids), address=format!("{:?}", addresses), "[DKG-IO]");
         let mut connection_manager =
             ConnectionManager::new(party, SocketAddr::new("0.0.0.0".parse().unwrap(), port));
         let mut channels: HashMap<u64, NetIOChannel> = Default::default();
@@ -323,7 +323,7 @@ impl NetIOCommittee {
             };
             channels.insert(ids[i], channel);
         }
-        info!(info="[DKG-IO] all channels created");
+        info!("[DKG-IO] all channels created");
         let committee = Self {
             party,
             ids: ids.to_vec(),
@@ -342,7 +342,7 @@ impl NetIOCommittee {
                 );
             }
         }
-        info!(info="[DKG-IO] all channels connected and acknowledged");
+        info!("[DKG-IO] all channels connected and acknowledged");
         Ok(committee)
     }
 

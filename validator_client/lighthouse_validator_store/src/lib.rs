@@ -622,10 +622,10 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
             .await
         {
             Ok(_) => {
-                info!(info="remove validator keystore", validator_public_key=?validator_public_key);
+                info!(validator_public_key=?validator_public_key, "remove validator keystore");
             }
             Err(e) => {
-                error!(msg="remove validator keystore", validator_public_key=?validator_public_key);
+                error!(validator_public_key=?validator_public_key, "remove validator keystore");
             }
         }
     }
@@ -635,7 +635,7 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
         validator_public_key: &PublicKey,
         fee_recipient: Address,
     ) {
-        info!(info="setting validator fee recipient", validator_public_key=?validator_public_key, fee_recipient=?fee_recipient);
+        info!(validator_public_key=?validator_public_key, fee_recipient=?fee_recipient, "setting validator fee recipient");
         match self
             .validators
             .write()

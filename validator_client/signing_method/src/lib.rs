@@ -515,13 +515,13 @@ impl SigningMethod {
                     || operator_committee.is_backup(epoch.as_u64());
 
                 info!(
-                    info="Distributed Signing Method",
                     Validator=?operator_committee.validator_public_key,
                     Epoch=epoch.as_u64(),
                     Slot=slot.as_u64(),
                     Duty=duty,
                     Root=?signing_root,
-                    Is_aggregator=is_aggregator
+                    Is_aggregator=is_aggregator,
+                    "Distributed Signing Method",
                 );
 
                 let keypair = keypair.clone();

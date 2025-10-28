@@ -131,8 +131,8 @@ pub fn status_report(
                 report_body.sign_hex = Some(report_body.sign_digest(&node_secret.secret).unwrap());
                 let url_str = format!("{}{}", safestake_api, "status");
                 info!(
-                    info="status_report",
-                    report=?report_body
+                    report=?report_body,
+                    "status_report",
                 );
                 let _ = request_to_api(report_body, &url_str).await;
             }

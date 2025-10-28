@@ -412,16 +412,15 @@ impl Config {
 
         // operator id
         config.safestake_config.operator_id = validator_client_config.id;
-        info!(info="read operator id", operator_id= config.safestake_config.operator_id);
-
+        info!(id = config.safestake_config.operator_id, "read operator id");
         config.safestake_config.ip = validator_client_config.ip.parse().map_err(|_| format!("failed to parse ip {}", validator_client_config.api))?;
-        info!(info= "read operator ip",operator_ip=%config.safestake_config.ip);
+        info!(operator_ip=%config.safestake_config.ip, "read operator ip");
 
         config.safestake_config.base_port = validator_client_config.base_port;
-        info!(info="read base port",base_port =config.safestake_config.base_port);
+        info!(base_port=config.safestake_config.base_port, "read base port");
 
         config.safestake_config.safestake_api = validator_client_config.api.clone();
-        info!(info="read safestake api", safestake_api =%config.safestake_config.safestake_api);
+        info!( safestake_api =%config.safestake_config.safestake_api, "read safestake api",);
 
         // node secret
         let node_secret_path = default_root_dir
@@ -430,7 +429,7 @@ impl Config {
 
         let secret = if node_secret_path.exists() {
             let secret = Secret::read(&node_secret_path)?;
-            info!(info="read node key", public_key=format!("{}", &secret.name));
+            info!(public_key=format!("{}", &secret.name), "read node key");
             secret
         } else {
             let secret = Secret::new();
@@ -452,12 +451,12 @@ impl Config {
         config.safestake_config.store_path = default_root_dir
             .join(get_network_dir(cli_args))
             .join(DVF_STORE_PATH);
-        info!(info="read store path",store_path=format!("{:?}", &config.safestake_config.store_path));
+        info!(store_path=format!("{:?}", &config.safestake_config.store_path), "read store path");
 
         config.safestake_config.contract_record_path = default_root_dir
             .join(get_network_dir(cli_args))
             .join(DVF_CONTRACT_BLOCK_PATH);
-        info!(info="read contract block path",contract_record_path= format!("{:?}", &config.safestake_config.contract_record_path));
+        info!(contract_record_path= format!("{:?}", &config.safestake_config.contract_record_path), "read contract block path");
 
         // contract
         config.safestake_config.network_contract = validator_client_config.network_contract.clone();
@@ -466,10 +465,10 @@ impl Config {
         config.safestake_config.cluster_contract = validator_client_config.cluster_contract.clone();
 
 
-        info!(info="network contracts", network_contract = &config.safestake_config.network_contract, registry_contract=&config.safestake_config.registry_contract, config_contract=&config.safestake_config.config_contract, cluster_contract=&config.safestake_config.cluster_contract);
+        info!(network_contract = &config.safestake_config.network_contract, registry_contract=&config.safestake_config.registry_contract, config_contract=&config.safestake_config.config_contract, cluster_contract=&config.safestake_config.cluster_contract, "contracts");
 
         config.safestake_config.rpc_url = validator_client_config.rpc_url.clone();
-        info!(info="read rpc-url",rpc_url= &config.safestake_config.rpc_url);
+        info!(rpc_url= &config.safestake_config.rpc_url, "read rpc-url");
 
         config.safestake_config.beacon_nodes = config.beacon_nodes.clone();
         config.disable_attesting = validator_client_config.disable_attesting;

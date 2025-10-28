@@ -79,7 +79,7 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
         let store_fut = async move {
             loop {
                 if let Some((msg, signature, validator_public_key)) = rx.recv().await {
-                    info!(info="local sign", signing_root= %hex::encode(msg));
+                    info!(signing_root= %hex::encode(msg), "local sign");
                     let mut key = msg.0.to_vec();
                     key.extend_from_slice(&validator_public_key.serialize());
                     let _ = store.put_bytes(
@@ -193,8 +193,8 @@ impl<T: SlotClock + 'static, E: EthSpec> SafestakeService<T, E> {
                 Ok(Safe::Valid) => {
                     let signing_root = block.signing_root(domain_hash);
                     info!(
-                        info="safestake operator sign block",
-                        signing_root=format!("{:?}", signing_root)
+                        signing_root=format!("{:?}", signing_root),
+                        "safestake operator sign block",
                     );
                     let sig = self.sign_msg(&validator_public_key, signing_root).await?;
                     let serialized_signature = sig.serialize();
@@ -373,7 +373,7 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         ) {
             Ok(Safe::Valid) => {
                 let signing_root = attestation_data.signing_root(domain_hash);
-                info!(info="opeartor service attestation",signing_root=%signing_root);
+                info!(signing_root=%signing_root, "opeartor service attestation");
                 let sig = self.sign_msg(&validator_public_key, signing_root).await?;
                 let serialized_signature = sig.serialize();
                 self.store
@@ -464,9 +464,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         }
 
         info!(
-            info="propose full block",
             validator_public_key=%validator_public_key,
-            fee_recipient= %fee_recipient
+            fee_recipient= %fee_recipient,
+            "propose full block",
         );
 
         let output = self
@@ -505,8 +505,8 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             };
 
         info!(
-            info="propose blinded block",
             validator_public_key=%validator_public_key,
+            "propose blinded block",
         );
 
         let output = self
@@ -549,8 +549,8 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let signing_root = attestation.data().signing_root(domain_hash);
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
-            info="received broadcast attestation",
             validator_public_key=hex::encode(&req.validator_public_key),
+            "received broadcast attestation",
         );
         // lighthouse/validator_client/validator_services/src/attestation_service.rs:468
         let slot = attestation.data().slot;
@@ -583,11 +583,11 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             .await
         {
             Ok(()) => info!(
-                info="Successfully published attestations by leader",
                 validator_index=req.validator_index,
                 committee_index=committee_index,
                 slot=slot.as_u64(),
                 type="unaggregated",
+                "Successfully published attestations by leader",
             ),
             Err(e) => error!(
                 error=%e,
@@ -624,8 +624,8 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
-            info="received broadcast aggregate and proof",
             validator_public_key = hex::encode(req.validator_public_key),
+            "received broadcast aggregate and proof",
         );
 
         let fork_name = self.spec.fork_name_at_slot::<E>(aggregate_and_proof.message().aggregate().data().slot);
@@ -652,12 +652,12 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             Ok(()) => {
                 let attestation = aggregate_and_proof.message().aggregate();
                 info!(
-                    info="Successfully published attestation by leader",
                     aggregator=aggregate_and_proof.message().aggregator_index(),
                     head_block=format!("{:?}", attestation.data().beacon_block_root),
                     committee_index=attestation.committee_index(),
                     slot=attestation.data().slot.as_u64(),
                     type="aggregated",
+                    "Successfully published attestation by leader",
                 );
                 
             }
@@ -731,8 +731,8 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let signing_root = sync_committee_message.beacon_block_root.signing_root(domain_hash);
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
-            info="received broadcast sync committee message",
             validator_public_key=hex::encode(req.validator_public_key),
+            "received broadcast sync committee message",
         );
 
         // lighthouse/validator_client/validator_services/src/sync_committee_service.rs:303
@@ -753,9 +753,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
                     ))
                 })?;
         info!(
-            info="Successfully published sync committee messages by leader",
             beacon_block_roo=?beacon_block_root,
             slot=?slot,
+            "Successfully published sync committee messages by leader"
         );
         Ok(Response::new(EmptyResponse { }))
     }
@@ -786,9 +786,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let slot = signed_block.slot().as_u64();
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
-            info="received broadcast full block",
             slot=slot,
             validator_public_key=hex::encode(&req.validator_public_key),
+            "received broadcast full block",
         );
         self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
             let signed_block = signed_block.clone();
@@ -810,9 +810,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             ))
         })?;
         info!(
-            info="Successfully published full block by leader",
             validator_public_key=hex::encode(&req.validator_public_key),
             slot=slot,
+            "Successfully published full block by leader",
         );
         Ok(Response::new(EmptyResponse { }))
     }
@@ -843,9 +843,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
         let slot = signed_block.slot().as_u64();
         self.check_msg_signed(&signing_root.0, &req.validator_public_key)?;
         info!(
-            info="received broadcast blinded block",
             slot=slot,
             validator_public_key=hex::encode(&req.validator_public_key),
+            "received broadcast blinded block",
         );
 
         self.beacon_nodes.request(ApiTopic::Blocks, |beacon_node| {
@@ -864,9 +864,9 @@ impl<T: SlotClock + 'static, E: EthSpec> Safestake for SafestakeService<T, E> {
             ))
         })?;
         info!(
-            info="Successfully published blinded block by leader",
             validator_public_key=hex::encode(&req.validator_public_key),
             slot=slot,
+            "Successfully published blinded block by leader",
         );
         Ok(Response::new(EmptyResponse { }))
     }
@@ -879,16 +879,16 @@ fn handle_block_post_error(err: eth2::Error, slot: u64) -> Result<(), Status> {
     if let Some(status) = err.status() {
         if status == eth2::StatusCode::ACCEPTED {
             info!(
-                info="Block is already known to BN or might be invalid",
                 slot=slot,
                 status_code=status.as_u16(),
+                "Block is already known to BN or might be invalid",
             );
             return Ok(());
         } else if status.is_success() {
             warn!(
-                info="Block published with non-standard success code",
                 slot=slot,
                 status_code=status.as_u16(),
+                "Block published with non-standard success code",
             );
             return Ok(());
         }

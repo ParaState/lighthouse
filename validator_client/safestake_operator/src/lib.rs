@@ -186,8 +186,8 @@ impl TOperator for RemoteOperator {
                                 Code::Unimplemented => { break; }
                                 _ => {
                                     warn!(
-                                        info="failed to get remote operator's signature",
-                                        retry=?i
+                                        retry=?i,
+                                        "failed to get remote operator's signature",
                                     );
                                     sleep(Duration::from_millis(200)).await;
                                 }
@@ -252,8 +252,8 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            info="operator liveness",
-                            operator=?self.operator_id
+                            operator=?self.operator_id,
+                            "operator liveness",
                         );
                         return true;
                     },
@@ -299,8 +299,8 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(resp) => {
                         info!(
-                            info="remote attestation",
-                            response=?resp.into_inner().msg
+                            response=?resp.into_inner().msg,
+                            "remote attestation",
                         );
                     },
                     Err(e) => {
@@ -415,8 +415,8 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            info="remote proposal full block",
-                            signing_root=%domain_hash
+                            signing_root=%domain_hash,
+                            "remote proposal full block"
                         );
                     },
                     Err(e) => {
@@ -460,8 +460,8 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            info="remote proposal blinded block",
-                            signing_root=%domain_hash
+                            signing_root=%domain_hash,
+                            "remote proposal blinded block",
                         );
                     },
                     Err(e) => {
@@ -506,7 +506,7 @@ impl TOperator for RemoteOperator {
                 match result {
                     Ok(_) => {
                         info!(
-                            info="simple duty",
+                            "simple duty",
                         );
                     },
                     Err(e) => {

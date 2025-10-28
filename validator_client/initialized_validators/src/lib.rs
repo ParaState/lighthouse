@@ -1556,19 +1556,19 @@ impl InitializedValidators {
                                 self.validators
                                     .insert(init.voting_public_key().compress(), init);
                                 info!(
-                                    info="Enabled validator",
                                     signing_method="distributed_keystore",
                                     voting_pubkey=?def.voting_public_key,
                                     operator=operator_id,
+                                    "Enabled validator"
                                 );
 
                                 if let Some(lockfile_path) = existing_lockfile_path {
                                     warn!(
-                                        info="Ignored stale lockfile",
                                         path=?lockfile_path.display(),
                                         cause="Ungraceful shutdown (harmless) OR \
                                                     non-Lighthouse client using this keystore \
-                                                    (risky)"
+                                                    (risky)",
+                                        "Ignored stale lockfile",
                                     );
                                 }
                             }
