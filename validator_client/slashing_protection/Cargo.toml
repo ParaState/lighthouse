@@ -6,12 +6,13 @@ edition = { workspace = true }
 autotests = false
 
 [features]
-arbitrary-fuzz = ["types/arbitrary-fuzz"]
+arbitrary-fuzz = ["types/arbitrary-fuzz", "eip_3076/arbitrary-fuzz"]
 portable = ["types/portable"]
 
 [dependencies]
 tempfile = { workspace = true }
 types = { workspace = true }
+eip_3076 = { workspace = true, features = ["json"] }
 rusqlite = { workspace = true }
 r2d2 = { workspace = true }
 r2d2_sqlite = "0.25.0"
